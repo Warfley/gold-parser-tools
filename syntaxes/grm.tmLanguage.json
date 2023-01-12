@@ -37,7 +37,7 @@
 		"Identifiers": {
 			"patterns": [{
 				"name": "keyword.identifier",
-				"match": "[A-Za-z0-9_]+"
+				"match": "[A-Za-z0-9_.-]+"
 			}]
 		},
 		"Sets": {
@@ -47,7 +47,7 @@
 			"patterns": [
 				{
 					"name": "constant.set.identifier",
-					"match": "\\\\."
+					"match": "\\\\.+"
 				}
 			]
 		},
@@ -69,7 +69,7 @@
 			"patterns": [
 				{
 					"name": "variable.nonterminal.identifier",
-					"match": "\\\\."
+					"match": "[A-Za-z0-9_.\\s-]+"
 				}
 			]
 		},

@@ -14,6 +14,16 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "GOLD Tools",
+      "properties": {
+        "gold.path": {
+          "type": "string",
+          "default": null,
+          "description": "Specifies the folder path containing the GOLD command line tools."
+        }
+      }
+    },
     "languages": [{
       "id": "grm",
       "aliases": ["Gold Grammar", "grm"],
