@@ -1,0 +1,111 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "Gold Grammar",
+	"patterns": [
+		{
+			"include": "#Identifiers"
+		},
+		{
+			"include": "#Sets"
+		},
+		{
+			"include": "#ConstSets"
+		},
+		{
+			"include": "#NonTerminals"
+		},
+		{
+			"include": "#Terminals"
+		},
+		{
+			"include": "#Parameter"
+		},
+		{
+			"include": "#Operators"
+		},
+		{
+			"include": "#Comment"
+		}
+	],
+	"repository": {
+		"Operators": {
+			"patterns": [{
+				"name": "keyword.operator",
+				"match":"=|::=|\\||\\?|\\+|\\-|\\*|\\(|\\)|@"
+			}]
+		},
+		"Identifiers": {
+			"patterns": [{
+				"name": "keyword.identifier",
+				"match": "[A-Za-z0-9_]+"
+			}]
+		},
+		"Sets": {
+			"name": "constant.numeric",
+			"begin": "{",
+			"end": "}",
+			"patterns": [
+				{
+					"name": "constant.set.identifier",
+					"match": "\\\\."
+				}
+			]
+		},
+		"ConstSets": {
+			"name": "constant.regexp",
+			"begin": "\\[",
+			"end": "\\]",
+			"patterns": [
+				{
+					"name": "constant.set.identifier",
+					"match": "\\\\."
+				}
+			]
+		},
+		"NonTerminals": {
+			"name": "variable.nonterminal",
+			"begin": "<",
+			"end": ">",
+			"patterns": [
+				{
+					"name": "variable.nonterminal.identifier",
+					"match": "\\\\."
+				}
+			]
+		},
+		"Terminals": {
+			"name": "string.quoted.single",
+			"begin": "'",
+			"end": "'",
+			"patterns": [
+				{
+					"name": "constant.character",
+					"match": "\\\\."
+				}
+			]
+		},
+		"Parameter": {
+			"name": "constant.character.escape",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character",
+					"match": "\\\\."
+				}
+			]
+		},
+		"Comment": {
+			"name": "comment",
+			"begin": "!",
+			"end": "\n",
+			"patterns": [
+				{
+					"name": "constant.character",
+					"match": "\\\\."
+				}
+			]
+		}
+	},
+	"scopeName": "source.grm"
+}
