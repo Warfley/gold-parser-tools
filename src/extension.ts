@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { GRMAutoComplete } from "./autocomplete";
+import { document_changed, document_closed, document_opend } from './grm_editor';
 
 declare global {
 	var diagnostics_collection: vscode.DiagnosticCollection;
@@ -28,12 +29,19 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	globalThis.diagnostics_collection = vscode.languages.createDiagnosticCollection("grm");
 
+	let open_event = vscode.workspace.onDidOpenTextDocument(document_opend);
+	let change_event = vscode.workspace.onDidChangeTextDocument(document_changed);
+	let close_event = vscode.workspace.onDidCloseTextDocument(document_closed);
+
 	if (!check_path()) {
 		vscode.window.showErrorMessage("GOLD cmd binaries directory not set correctly. Please set 'gold.path' property");
 	}
 
 	context.subscriptions.push(completionProvider);
 	context.subscriptions.push(globalThis.diagnostics_collection);
+	context.subscriptions.push(open_event);
+	context.subscriptions.push(change_event);
+	context.subscriptions.push(close_event);
 }
 
 // This method is called when your extension is deactivated

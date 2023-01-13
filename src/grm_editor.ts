@@ -1,0 +1,102 @@
+/* eslint-disable @typescript-eslint/naming-convention */
+import { commands, Position, Range, Selection, TextDocument, TextDocumentChangeEvent, TextEditor, window } from "vscode";
+import { DocumentParser, DefinitionType } from "./grm_parser";
+
+export function document_opend(document: TextDocument) {
+		if (document.languageId === "grm") {
+			let parser = DocumentParser.get_or_create(document);
+			parser.parse();
+			parser.update_diagnostics();
+		}
+}
+
+function unindent(editor: TextEditor, at_line: number) {
+  let ln = editor.document.lineAt(at_line);
+  let indent = ln.isEmptyOrWhitespace
+             ? ln.range.end.character
+             : ln.firstNonWhitespaceCharacterIndex - 1;
+  let delete_range = new Range(ln.range.start, ln.range.start.translate(0, indent));
+    editor.edit((builder) =>{
+      builder.delete(delete_range);
+    });
+}
+
+function indent_to_last_definition(parser: DocumentParser, editor: TextEditor, at_line?: number) {
+
+  if (at_line === undefined) {
+    at_line = editor.selection.start.line;
+  }
+
+  if (at_line < 1) {
+    return;
+  }
+
+  if (!editor.document.lineAt(at_line).isEmptyOrWhitespace) {
+    return false;
+  }
+
+  let last_definition = parser.definition_at(editor.document.lineAt(at_line - 1).range.end);
+  if (last_definition === undefined || last_definition?.type === DefinitionType.ERROR) {
+    unindent(editor, at_line);
+    return;
+  }
+
+  let indent = last_definition!.range.start.character;
+
+  if (editor.document.lineAt(at_line - 1).text.trimEnd().endsWith("=")) {
+    indent += 1;
+  } else {
+    if (last_definition.type === DefinitionType.TERMINAL) {
+      unindent(editor, at_line);
+      return;
+    }
+    indent -= 1 + (last_definition.type === DefinitionType.NON_TERMINAL ? 1 : 0);
+  }
+
+  if (indent <= 0) {
+    return;
+  }
+
+  editor.edit((builder) =>{
+    builder.insert(new Position(at_line!, 0), ' '.repeat(indent));
+  }).then(() =>
+    commands.executeCommand("cursorMove", {
+      to: "right",
+      by: "chacharacter",
+      value: indent
+  }));
+}
+
+const new_line_expr = /\n *$/m;
+
+export function document_changed(event: TextDocumentChangeEvent) {
+  let editor = window.activeTextEditor;
+  if (editor?.document.uri.toString() !== event.document.uri.toString() ||
+      event.document.languageId !== "grm" ||
+      event.contentChanges.length === 0) {
+        return;
+  }
+
+  let parser = DocumentParser.get_or_create(event.document);
+  parser.parse();
+  parser.update_diagnostics();
+
+  // Newline indentations
+  if (event.contentChanges.length >= 1 && // Sometimes event with no changes is fired
+      event.contentChanges[0].text.search(new_line_expr) >= 0) {
+    // When autoident it is for some reason 2 changes
+    if (event.contentChanges.length === 1 ||(
+        event.contentChanges.length === 2 &&
+        event.contentChanges[1].text === "" &&
+        event.contentChanges[1].range.start.line === event.contentChanges[0].range.start.line + 1
+      )) {
+      indent_to_last_definition(parser, editor, event.contentChanges[0].range.end.line+1);
+    }
+  }
+}
+
+export function document_closed(document: TextDocument) {
+		if (document.languageId === "grm") {
+			DocumentParser.close_document(document);
+		}
+}

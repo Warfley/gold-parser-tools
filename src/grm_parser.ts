@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import { Diagnostic, DiagnosticSeverity, Position, Range, TextDocument } from "vscode";
+import internal = require("stream");
+import { Diagnostic, DiagnosticSeverity, LinkedEditingRangeProvider, Position, Range, TextDocument } from "vscode";
 
 export enum TokenType {UNKNOWN=0, TERMINAL, NON_TERMINAL, SET, PARAMETER, CONST_TERMINAL, CONST_SET, OPERATOR};
 const MAX_TOKEN: number = TokenType.OPERATOR;
@@ -10,28 +11,24 @@ export interface GRMToken {
   location: Position;
 }
 
-interface GRMDefinedSymbols {
-  sets: Map<string, GRMToken>;
-  non_terminals: Map<string, GRMToken>;
-  terminals: Map<string, GRMToken>;
-}
-
-interface GRMSymbols {
-  sets: Array<GRMToken>;
-  non_terminals: Array<GRMToken>;
-  terminals: Array<GRMToken>;
+interface GRMGrammarSymbols {
+  defined_symbols: Map<DefinitionType, Map<string, GRMToken>>;
+  used_symbols: Map<TokenType, Array<GRMToken>>;
 }
 
 interface GRMError {
   error_range: Range;
   error_message: string;
+  severity: DiagnosticSeverity;
 }
 
-export enum ParserContext {NONE, ERROR, PARAM, SET, TERMINAL, NON_TERMINAL};
+export enum DefinitionType {ERROR, PARAMETER, SET, TERMINAL, NON_TERMINAL};
 
-interface GRMContextRange {
-  range: Range,
-  context: ParserContext
+interface GRMDefinition {
+  spanning_symbol: GRMToken;
+  symbols: Array<GRMToken>;
+  range: Range;
+  type: DefinitionType;
 }
 
 const DEFAULT_SETS: Array<GRMToken> = [
@@ -77,40 +74,65 @@ const DEFAULT_SETS: Array<GRMToken> = [
   }
 ];
 
+export function token_name(token: GRMToken): string {
+  switch (token.type) {
+    case TokenType.CONST_TERMINAL:
+    case TokenType.NON_TERMINAL:
+    case TokenType.PARAMETER:
+    case TokenType.SET:
+      return token.value.substring(1, token.value.length-1).trim();
+  }
+  return token.value;
+}
+
 const advance_expr = new RegExp("!\\*|[^\\s]");
+const end_of_comment_expr = new RegExp("\\*!");
 // See language definition
-// Terminal Token: [A-Za-z0-9_.-]+
+// Terminal Token: [A-Za-z0-9_.][A-Za-z0-9_.-]* // to not match (-) (not quite correct)
 // Non Terminal Token: <[A-Za-z0-9\s_.-]+>
 // Set Token: {.+}
 // Parameter token: ".+"
-// Const Terminal token: '.+'
+// Const Terminal token: '.*' ('' is allowed)
 // const set token: [.+]
 // Operators: =|::=|\||\?|\+|\-|\*|\(|\)|@
-const token_expr = new RegExp("([A-Za-z0-9_.-]+)|<([A-Za-z0-9\\s_.-]+)>|{(.+?)}|\"(.+?)\"|'(.+?)'|(\\[.+?\\])|(=|::=|\\||\\?|\\+|\\-|\\*|\\(|\\)|@)");
+const token_expr = new RegExp("([A-Za-z0-9_.][A-Za-z0-9_.-]*)|<([A-Za-z0-9\\s_.-]+)>|{(.+?)}|\"(.+?)\"|'(.*?)'|(\\[.+?\\])|(=|::=|\\||\\?|\\+|\\-|\\*|\\(|\\)|@)");
 
 export class DocumentParser {
-  defined_symbols: GRMDefinedSymbols = {
-      sets: new Map<string, GRMToken>(),
-      non_terminals: new Map<string, GRMToken>(),
-      terminals: new Map<string, GRMToken>()
-    };
-  used_symbols: GRMSymbols = {
-      sets: [],
-      non_terminals: [],
-      terminals: []
-  };
-  errors: Array<GRMError> = [];
-  context_ranges: Array<GRMContextRange> = [];
-
-
   private document!: TextDocument;
+  // Parsing data
   private current_line: number = 0;
   private current_index: number = 0;
-  private current_context: ParserContext = ParserContext.NONE;
-  private expect_equal: boolean = false;
-  private last_token?: GRMToken = undefined;
 
-  constructor(document: TextDocument) {
+  // parsing results
+  private errors: Array<GRMError> = [];
+  private definitions: Array<GRMDefinition> = [];
+  private symbols: GRMGrammarSymbols = {
+      defined_symbols: new Map<DefinitionType, Map<string, GRMToken>>([
+        [DefinitionType.PARAMETER, new Map<string, GRMToken>()],
+        [DefinitionType.SET, new Map<string, GRMToken>()],
+        [DefinitionType.TERMINAL, new Map<string, GRMToken>()],
+        [DefinitionType.NON_TERMINAL, new Map<string, GRMToken>()],
+      ]),
+      used_symbols: new Map<TokenType, Array<GRMToken>>([
+        [TokenType.SET, new Array<GRMToken>()],
+        [TokenType.TERMINAL, new Array<GRMToken>()],
+        [TokenType.NON_TERMINAL, new Array<GRMToken>()],
+      ])
+  };
+
+  private static instances = new Map<string, DocumentParser>();
+  public static get_or_create(document: TextDocument): DocumentParser {
+    if (!this.instances.has(document.uri.toString())) {
+      this.instances.set(document.uri.toString(), new DocumentParser(document));
+    }
+    return this.instances.get(document.uri.toString())!;
+  }
+
+  public static close_document(document: TextDocument) {
+    this.instances.delete(document.uri.toString());
+  }
+
+  private constructor(document: TextDocument) {
     this.document = document;
   }
 
@@ -125,11 +147,11 @@ export class DocumentParser {
   }
 
   // Advances to the next token
-  private advance(): number {
+  private advance(end_line: number): number {
     let start_line = this.current_line;
     let start_index = this.current_index;
 
-    while (this.current_line < this.document.lineCount) {
+    while (this.current_line < end_line) {
       let rest_of_line = this.remaining_line();
       // find next token in rest of line
       let next_match = advance_expr.exec(rest_of_line);
@@ -145,16 +167,17 @@ export class DocumentParser {
         continue;
       }
       if (next_match[0] === "!*") {
-        let end_of_comment = rest_of_line.search("*!");
+        let end_of_comment = rest_of_line.search(end_of_comment_expr);
         while (end_of_comment < 0) {
           if (!this.next_line()) {
             this.errors.push({
               error_range: new Range(start_line, start_index + next_match.index, this.current_line, 0),
-              error_message: "Unterminated multiline comment"
+              error_message: "Unterminated multiline comment",
+              severity: DiagnosticSeverity.Error
             });
             return -1;
           }
-          end_of_comment = this.remaining_line().search("*!");
+          end_of_comment = this.remaining_line().search(end_of_comment_expr);
         }
         this.current_index = end_of_comment + 2;
         continue;
@@ -207,230 +230,180 @@ export class DocumentParser {
       }
     }
 
-    if (result.type === TokenType.UNKNOWN) {
-      this.errors.push({
-        error_range: new Range(current_location, new Position(this.current_line, this.current_index + result.value.length)),
-        error_message: "Unknown token found: " + result.value
-      });
-    }
     // Advance to after this token
     this.current_index += result.value.length;
     return result;
   }
 
-  private token_error(token: GRMToken, message: string) {
+  private token_error(token: GRMToken, message: string, severity: DiagnosticSeverity = DiagnosticSeverity.Error) {
     this.errors.push({
       error_range: new Range(token.location, token.location.translate(0, token.value.length)),
-      error_message: message.replace("%%", token.value)
+      error_message: message.replace("%T", TokenType[token.type]).replace("%N", token_name(token).replace("%%", token.value)),
+      severity: severity
     });
   }
 
-  private update_context(new_context: ParserContext) {
-    // close current context range
-    if (this.last_token !== undefined && this.context_ranges.length > 0) {
-      let last_context = this.context_ranges.pop()!;
-      if (last_context.context === this.current_context) {
-        last_context.range = new Range(last_context.range.start, this.last_token.location.translate(0, this.last_token.value.length));
-        this.context_ranges.push(last_context);
-      }
+  private push_definition(spanning_symbol: GRMToken) {
+    let definition: GRMDefinition = {
+      spanning_symbol: spanning_symbol,
+      symbols: [],
+      range: new Range(0, 0, 0, 0),
+      type: spanning_symbol.type === TokenType.PARAMETER
+          ? DefinitionType.PARAMETER
+          : spanning_symbol.type === TokenType.SET
+          ? DefinitionType.SET
+          : spanning_symbol.type === TokenType.TERMINAL ||
+            spanning_symbol.type === TokenType.CONST_TERMINAL
+          ? DefinitionType.TERMINAL
+          : spanning_symbol.type === TokenType.NON_TERMINAL
+          ? DefinitionType.NON_TERMINAL
+          : DefinitionType.ERROR
+    };
+    if (definition.type === DefinitionType.ERROR) {
+      this.token_error(spanning_symbol, "Symbol of type %T cannot be on RHS of a declaration");
     }
-    this.current_context = new_context;
+    this.definitions.push(definition);
   }
 
-  private push_context(token: GRMToken) {
-    if (this.current_context === ParserContext.ERROR ||
-        this.current_context === ParserContext.NONE) {
-      return;
+  private add_to_definition(symbol: GRMToken) {
+    if (this.definitions.length === 0) {
+      this.push_definition(symbol);
     }
-    // Push new context range from this point forward
-    this.context_ranges.push({
-      context: this.current_context,
-      range: new Range(token.location.translate(0, token.value.length),
-                       token.location.translate(0, token.value.length))
-    });
+    let after_symbol = symbol.location.translate(0, symbol.value.length);
+    let current_definition = this.definitions.pop()!;
+    if (current_definition.symbols.length === 0) {
+      // First symbol spans up the range
+      current_definition.range = new Range(after_symbol, after_symbol);
+    } else {
+      // There is at least one symbol already part
+      current_definition.range = new Range(current_definition.range.start,
+                                           after_symbol);
+    }
+    current_definition.symbols.push(symbol);
+    this.definitions.push(current_definition);
   }
 
-  private push_defined_symbols(token: GRMToken) {
-    if (token.type === TokenType.CONST_TERMINAL
-     || token.type === TokenType.TERMINAL) {
-      if (this.defined_symbols.terminals.has(token.value)) {
-        this.token_error(token, "Redefinition of TERMINAL %%");
-      } else {
-        this.defined_symbols.terminals.set(token.value, token);
-      }
-    } else if (token.type === TokenType.NON_TERMINAL) {
-      if (this.defined_symbols.non_terminals.has(token.value)) {
-        this.token_error(token, "Redefinition of NON-TERMINAL %%");
-      } else {
-        this.defined_symbols.non_terminals.set(token.value, token);
-      }
-    } else if (token.type === TokenType.SET) {
-      if (this.defined_symbols.sets.has(token.value)) {
-        this.token_error(token, "Redefinition of SET %%");
-      } else {
-        this.defined_symbols.sets.set(token.value, token);
-      }
-    }
-  }
-
-  private parse_token(first_in_line: boolean) {
-    let token = this.read_token();
-    // If we expect ::= (for non terminals) or =
-    let has_expected_equal = this.expect_equal;
-    if (this.expect_equal) {
-      if (this.current_context === ParserContext.NON_TERMINAL
-       && token.value !== "::=") {
-        this.token_error(token, "Expected '::=' got %%");
-      } else if (this.current_context !== ParserContext.NON_TERMINAL
-              && token.value !== "=") {
-        this.token_error(token, "Expected '=' got %%");
-      }
-    }
-    // Reset for next round
-    this.expect_equal = false;
-
-    switch (token.type) {
-      case TokenType.UNKNOWN:
-        if (first_in_line) {
-          this.update_context(ParserContext.ERROR);
-        }
-        // Nothing to do for unreckognized tokens
-        break;
-
-      case TokenType.TERMINAL:
-        if (first_in_line) {
-          this.update_context(ParserContext.TERMINAL);
-          this.expect_equal = true;
-          this.push_defined_symbols(token);
-        } else if (this.current_context !== ParserContext.PARAM) {
-          this.used_symbols.terminals.push(token);
-          if (this.current_context === ParserContext.SET) {
-            this.token_error(token, "TERMINAL symbols are not allowed in SET definitions");
-          }
-        }
-        break;
-
-      case TokenType.NON_TERMINAL:
-        if (first_in_line) {
-          this.update_context(ParserContext.NON_TERMINAL);
-          this.expect_equal = true;
-          this.push_defined_symbols(token);
-        } else {
-          this.used_symbols.non_terminals.push(token);
-          if (this.current_context === ParserContext.SET
-           || this.current_context === ParserContext.TERMINAL) {
-            this.token_error(token, "NON-TERMINAL symbols are only allowed in NON-TERMINAL definitions");
-          }
-        }
-        break;
-
-      case TokenType.SET:
-        if (first_in_line) {
-          this.update_context(ParserContext.SET);
-          this.expect_equal = true;
-          this.push_defined_symbols(token);
-        } else if (this.current_context !== ParserContext.PARAM) {
-          if (this.current_context === ParserContext.NON_TERMINAL) {
-            this.token_error(token, "SET definitions are not allowed in NON-TERMINAL definitions");
-        }
-          this.used_symbols.sets.push(token);
-        }
-        break;
-
-      case TokenType.PARAMETER:
-        if (first_in_line) {
-          this.update_context(ParserContext.PARAM);
-          this.expect_equal = true;
-        } else {
-          this.token_error(token, "Parameters must always be on the left hand side");
-        }
-        break;
-
-      case TokenType.CONST_TERMINAL:
-        if (first_in_line) {
-          this.update_context(ParserContext.NON_TERMINAL);
-          this.expect_equal = true;
-          this.push_defined_symbols(token);
-        }
-        break;
-
-      case TokenType.CONST_SET:
-        if (first_in_line) {
-          this.update_context(ParserContext.NONE);
-          this.token_error(token, "Const set definitions are only allowed on the right hand side of definitions");
-        } else if (this.current_context === ParserContext.NON_TERMINAL) {
-          this.token_error(token, "SET definitions are not allowed in NON-TERMINAL definitions");
-        }
-        break;
-
-      case TokenType.OPERATOR:
-        if (token.value === "::=" || token.value === "=") {
-          this.push_context(token);
-        }
-        // Equal can always be in new line, and equal checks where already performed
-        if (first_in_line && !has_expected_equal) {
-          if (this.current_context === ParserContext.NON_TERMINAL &&
-              token.value !== "|") {
-            this.token_error(token, "Expected '|' but got %%");
-          } else if (this.current_context === ParserContext.SET &&
-                     token.value !== "+" &&
-                     token.value !== "-") {
-            this.token_error(token, "Expected '+' or '-' got %%");
-          } else if (this.current_context === ParserContext.TERMINAL &&
-                     token.value !== "|") {
-            this.token_error(token, "Expected '|' got %%");
-          }
-        }
-        break;
-    }
-
-    this.last_token = token;
-  }
-
-  public parse() {
+  private reset(start_line: number, start_index: number) {
     // Clear Parser
-    this.defined_symbols = {
-      sets: new Map<string, GRMToken>(),
-      non_terminals: new Map<string, GRMToken>(),
-      terminals: new Map<string, GRMToken>()
-    };
-    DEFAULT_SETS.forEach((token) => this.defined_symbols.sets.set(token.value, token));
-    this.used_symbols = {
-        sets: [],
-        non_terminals: [],
-        terminals: []
-    };
     this. errors = [];
-    this.context_ranges = [];
+    this.definitions = [];
 
-    this.current_line = 0;
-    this.current_index = 0;
-    this.current_context = ParserContext.NONE;
-    this.expect_equal = false;
-    this.last_token = undefined;
+    this.current_line = start_line;
+    this.current_index = start_index;
 
-    // parse loop
-    let first_in_line = true;
-    let eof = this.advance() < 0;
-    while (!eof) {
-      this.parse_token(first_in_line);
-      let advanced = this.advance();
-      eof = advanced < 0;
-      first_in_line = advanced > 0;
+    this.symbols = {
+      defined_symbols: new Map<DefinitionType, Map<string, GRMToken>>([
+        [DefinitionType.PARAMETER, new Map<string, GRMToken>()],
+        [DefinitionType.SET, new Map<string, GRMToken>()],
+        [DefinitionType.TERMINAL, new Map<string, GRMToken>()],
+        [DefinitionType.NON_TERMINAL, new Map<string, GRMToken>()],
+      ]),
+      used_symbols: new Map<TokenType, Array<GRMToken>>([
+        [TokenType.SET, new Array<GRMToken>()],
+        [TokenType.TERMINAL, new Array<GRMToken>()],
+        [TokenType.NON_TERMINAL, new Array<GRMToken>()],
+      ])
+    };
+  }
+
+  private validate_param_definition(definition: GRMDefinition) {
+
+  }
+
+  private validate_set_definition(definition: GRMDefinition) {
+
+  }
+
+  private validate_terminal_definition(definition: GRMDefinition) {
+
+  }
+
+  private validate_non_terminal_definition(definition: GRMDefinition) {
+
+  }
+
+  private check_errors() {
+    // first collect all symbols
+    for (let definition of this.definitions) {
+      if (definition.type === DefinitionType.ERROR) {
+        this.errors.push({
+          error_message: "Invalid definition, unable to parse",
+          error_range: definition.range,
+          severity: DiagnosticSeverity.Warning
+        });
+        continue; // Skip unparsables (maybe better handling in future)
+      }
+      let defined_symbol = definition.spanning_symbol;
+      let definition_map = this.symbols.defined_symbols.get(definition.type)!;
+      if (definition_map.has(token_name(defined_symbol))) {
+        this.token_error(defined_symbol, "Redefinition of %T '%N'");
+      } else {
+        definition_map.set(token_name(defined_symbol), defined_symbol);
+      }
+
+      switch (definition.type) {
+        case DefinitionType.PARAMETER:
+          this.validate_param_definition(definition);
+          break;
+
+        case DefinitionType.SET:
+          this.validate_set_definition(definition);
+          break;
+
+        case DefinitionType.TERMINAL:
+          this.validate_terminal_definition(definition);
+          break;
+
+        case DefinitionType.NON_TERMINAL:
+          this.validate_non_terminal_definition(definition);
+          break;
+      }
+
+      // parse other symbols:
+      for (let symbol of definition.symbols) {
+        // undefiled chain through ? skips if not found
+        this.symbols.used_symbols.get(symbol.type)?.push(symbol);
+      }
     }
-    this.update_context(ParserContext.NONE);
 
     // Finally collect some errors:
     this.undefined_tokens(TokenType.SET, false).forEach((token) => this.token_error(token, "Undefined SET referenced %%"));
-    this.undefined_tokens(TokenType.TERMINAL, false).forEach((token) => this.token_error(token, "Undefined TERMINAL referenced %%"));
+    this.undefined_tokens(TokenType.TERMINAL, false).forEach((token) => this.token_error(token, "Undefined TERMINAL referenced %%, if you want to match the token as string please use '%%'", DiagnosticSeverity.Information));
     this.undefined_tokens(TokenType.NON_TERMINAL, false).forEach((token) => this.token_error(token, "Undefined NON-TERMINAL referenced %%"));
+  }
+
+  public parse(from: number = 0, to?: number) {
+    this.reset(from, 0);
+    if (to === undefined) {
+      to = this.document.lineCount;
+    }
+
+    // parse loop
+    let first_in_line = true;
+    // Goto first token
+    let eof = this.advance(to) < 0;
+    while (!eof) {
+      let token = this.read_token();
+      if (token.type !== TokenType.OPERATOR && first_in_line) {
+        this.push_definition(token);
+      } else {
+        this.add_to_definition(token);
+      }
+      let advanced = this.advance(to);
+      eof = advanced < 0;
+      first_in_line = advanced > 0;
+    }
   }
 
   public update_diagnostics() {
     let diagnostics: Array<Diagnostic> = [];
-
+    /* DEBUG: Show recognized contexts
+    for (let context of this.context_ranges) {
+      diagnostics.push(new Diagnostic(context.range, ParserContext[context.context], DiagnosticSeverity.Warning));
+    }
+    */
     for (let error of this.errors) {
-      diagnostics.push(new Diagnostic(error.error_range, error.error_message, DiagnosticSeverity.Error));
+      diagnostics.push(new Diagnostic(error.error_range, error.error_message, error.severity));
     }
     globalThis.diagnostics_collection.set(this.document.uri, diagnostics);
   }
@@ -439,29 +412,37 @@ export class DocumentParser {
     let result: Array<GRMToken> = [];
     let added: Set<string> = new Set<string>();
 
-    let tokens = type === TokenType.SET
-               ? this.used_symbols.sets
-               : type === TokenType.TERMINAL
-               ? this.used_symbols.terminals
-               : this.used_symbols.non_terminals;
+    let tokens = this.symbols.used_symbols.get(type);
+    if (tokens === undefined) {
+      return result;
+    }
 
     for (let token of tokens) {
-      if (!unique ||!added.has(token.value)) {
+      let key = token_name(token);
+      if (!unique ||!added.has(key)) {
         result.push(token);
-        added.add(token.value);
+        added.add(key);
       }
     }
 
-    let defined = type === TokenType.SET
-                ? this.defined_symbols.sets
-                : type === TokenType.TERMINAL
-                ? this.defined_symbols.terminals
-                : this.defined_symbols.non_terminals;
+    let defined = this.symbols.defined_symbols.get(
+        type === TokenType.SET
+      ? DefinitionType.SET
+      : type === TokenType.TERMINAL
+      ? DefinitionType.TERMINAL
+      : type === TokenType.NON_TERMINAL
+      ? DefinitionType.NON_TERMINAL
+      : DefinitionType.ERROR
+    );
+    if (defined === undefined) {
+      return result;
+    }
 
     for (let token of defined.values()) {
-      if (!unique || !added.has(token.value)) {
+      let key = token_name(token);
+      if (!unique || !added.has(key)) {
         result.push(token);
-        added.add(token.value);
+        added.add(key);
       }
     }
 
@@ -470,13 +451,37 @@ export class DocumentParser {
 
   public undefined_tokens(type: TokenType, unique: boolean = true): Array<GRMToken> {
     let tokens = this.all_tokens(type, unique);
-    let defined = type === TokenType.SET
-                ? this.defined_symbols.sets
-                : type === TokenType.TERMINAL
-                ? this.defined_symbols.terminals
-                : this.defined_symbols.non_terminals;
-    let result = tokens.filter((token) => !defined.has(token.value));
+    let defined = this.symbols.defined_symbols.get(
+        type === TokenType.SET
+      ? DefinitionType.SET
+      : type === TokenType.TERMINAL
+      ? DefinitionType.TERMINAL
+      : type === TokenType.NON_TERMINAL
+      ? DefinitionType.NON_TERMINAL
+      : DefinitionType.ERROR
+    );
+    if (defined === undefined) {
+      return tokens;
+    }
+    let result = tokens.filter((token) => defined!.has(token_name(token)));
 
     return result;
+  }
+
+  public definition_at(position: Position): GRMDefinition|undefined {
+    for (let definition of this.definitions) {
+      if (position.line === definition.range.start.line) {
+        return position.character >= definition.range.start.character
+             ? definition
+             : undefined;
+      } else if (position.line > definition.range.start.line &&
+                 position.line <= definition.range.end.line) {
+        // A defenition can only start with a new line
+        // therefore no char position check required
+        return definition;
+      }
+    }
+
+    return undefined;
   }
 }

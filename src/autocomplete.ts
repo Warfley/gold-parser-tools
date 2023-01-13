@@ -1,30 +1,9 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import { TextDocument, Position, CancellationToken, CompletionItemProvider, CompletionContext, CompletionItem, CompletionList, ProviderResult, CompletionItemKind } from "vscode";
-import { DocumentParser, GRMToken, ParserContext, TokenType } from "./grm_parser";
+import { TextDocument, Position, CancellationToken, CompletionItemProvider, CompletionItem, CompletionList, ProviderResult, CompletionItemKind, CompletionContext } from "vscode";
+import { DocumentParser, GRMToken, DefinitionType, TokenType } from "./grm_parser";
 
 export class GRMAutoComplete implements CompletionItemProvider {
   private parser?: DocumentParser = undefined;
-
-  private current_context(position: Position): ParserContext {
-    if (this.parser === undefined) {
-      return ParserContext.ERROR;
-    }
-
-    for (let ctx of this.parser.context_ranges) {
-      if (position.line === ctx.range.start.line) {
-        return position.character >= ctx.range.start.character
-             ? ctx.context
-             : ParserContext.NONE;
-      } else if (position.line > ctx.range.start.line &&
-                 position.line <= ctx.range.end.line) {
-        // A context can only start with a new line
-        // therefore no char position check required
-        return ctx.context;
-      }
-    }
-
-    return ParserContext.NONE;
-  }
 
   private add_symbols(symbols: Array<GRMToken>, list: CompletionList) {
     list.items = list.items.concat(
@@ -39,43 +18,36 @@ export class GRMAutoComplete implements CompletionItemProvider {
 
   provideCompletionItems(document: TextDocument, position: Position, token: CancellationToken, context: CompletionContext): ProviderResult<CompletionItem[] | CompletionList<CompletionItem>> {
 
-    this.parser = new DocumentParser(document);
-    this.parser.parse();
+    this.parser = DocumentParser.get_or_create(document);
     let result = new CompletionList<CompletionItem>();
 
-    let ctx = this.current_context(position);
-
-    switch (ctx) {
-    case ParserContext.NONE:
+    let last_definition = this.parser.definition_at(position);
+    if (last_definition === undefined ||
+        last_definition.type === DefinitionType.ERROR) {
       this.add_symbols(this.parser.undefined_tokens(TokenType.SET), result);
       this.add_symbols(this.parser.undefined_tokens(TokenType.TERMINAL), result);
       this.add_symbols(this.parser.undefined_tokens(TokenType.NON_TERMINAL), result);
-      break;
+    } else {
+      let definition = last_definition.type;
+      switch (definition) {
+      case DefinitionType.SET:
+        this.add_symbols(this.parser.all_tokens(TokenType.SET), result);
+        break;
 
-    case ParserContext.SET:
-      this.add_symbols(this.parser.all_tokens(TokenType.SET), result);
-      break;
+      case DefinitionType.TERMINAL:
+        this.add_symbols(this.parser.all_tokens(TokenType.SET), result);
+        this.add_symbols(this.parser.all_tokens(TokenType.TERMINAL), result);
+        break;
 
-    case ParserContext.TERMINAL:
-      this.add_symbols(this.parser.all_tokens(TokenType.SET), result);
-      this.add_symbols(this.parser.all_tokens(TokenType.TERMINAL), result);
-      break;
+      case DefinitionType.NON_TERMINAL:
+        this.add_symbols(this.parser.all_tokens(TokenType.NON_TERMINAL), result);
+        this.add_symbols(this.parser.all_tokens(TokenType.TERMINAL), result);
+        break;
 
-    case ParserContext.NON_TERMINAL:
-      this.add_symbols(this.parser.all_tokens(TokenType.NON_TERMINAL), result);
-      this.add_symbols(this.parser.all_tokens(TokenType.TERMINAL), result);
-      break;
-
-    case ParserContext.PARAM:
-      this.add_symbols(this.parser.all_tokens(TokenType.NON_TERMINAL), result);
-      break;
-
-    case ParserContext.ERROR:
-      this.add_symbols(this.parser.all_tokens(TokenType.NON_TERMINAL), result);
-      this.add_symbols(this.parser.all_tokens(TokenType.SET), result);
-      this.add_symbols(this.parser.all_tokens(TokenType.TERMINAL), result);
-
-      break;
+      case DefinitionType.PARAMETER:
+        this.add_symbols(this.parser.all_tokens(TokenType.NON_TERMINAL), result);
+        break;
+      }
     }
 
     this.parser.update_diagnostics();
@@ -83,8 +55,6 @@ export class GRMAutoComplete implements CompletionItemProvider {
   }
 
   resolveCompletionItem?(item: CompletionItem, token: CancellationToken): ProviderResult<CompletionItem> {
-    this.parser?.parse();
-    this.parser?.update_diagnostics();
     return null;
   }
 
