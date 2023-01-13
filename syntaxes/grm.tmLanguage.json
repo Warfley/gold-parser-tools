@@ -46,79 +46,44 @@
 		"Sets": {
 			"name": "constant.numeric",
 			"begin": "{",
-			"end": "}",
-			"patterns": [
-				{
-					"name": "constant.set.identifier",
-					"match": "\\\\.+"
-				}
-			]
+			"end": "}|\\n",
+			"patterns": []
 		},
 		"ConstSets": {
 			"name": "constant.regexp",
 			"begin": "\\[",
-			"end": "\\]",
-			"patterns": [
-				{
-					"name": "constant.set.identifier",
-					"match": "\\\\.*"
-				}
-			]
+			"end": "\\]|\\n",
+			"patterns": []
 		},
 		"NonTerminals": {
 			"name": "variable.nonterminal",
 			"begin": "<",
-			"end": ">",
-			"patterns": [
-				{
-					"name": "variable.nonterminal.identifier",
-					"match": "[A-Za-z0-9_.\\s-]+"
-				}
-			]
+			"end": ">|\\n",
+			"patterns": []
 		},
 		"Terminals": {
 			"name": "string.quoted.single",
 			"begin": "'",
-			"end": "'",
-			"patterns": [
-				{
-					"name": "constant.character",
-					"match": "\\\\.*"
-				}
-			]
+			"end": "'|\\n",
+			"patterns": []
 		},
 		"Parameter": {
 			"name": "constant.character.escape",
 			"begin": "\"",
-			"end": "\"",
-			"patterns": [
-				{
-					"name": "constant.character",
-					"match": "\\\\."
-				}
-			]
+			"end": "\"|\\n",
+			"patterns": []
 		},
 		"Comment": {
 			"name": "comment",
 			"begin": "![^*]",
 			"end": "\n",
-			"patterns": [
-				{
-					"name": "constant.character",
-					"match": "\\\\."
-				}
-			]
+			"patterns": []
 		},
 		"MLComment": {
 			"name": "comment.block",
 			"begin": "!\\*",
 			"end": "\\*!",
-			"patterns": [
-				{
-					"name": "constant.character",
-					"match": "\\\\."
-				}
-			]
+			"patterns": []
 		}
 	},
 	"scopeName": "source.grm"

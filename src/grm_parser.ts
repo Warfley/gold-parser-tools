@@ -238,7 +238,7 @@ export class DocumentParser {
   private token_error(token: GRMToken, message: string, severity: DiagnosticSeverity = DiagnosticSeverity.Error) {
     this.errors.push({
       error_range: new Range(token.location, token.location.translate(0, token.value.length)),
-      error_message: message.replace("%T", TokenType[token.type]).replace("%N", token_name(token).replace("%%", token.value)),
+      error_message: message.replace("%T", TokenType[token.type]).replace("%N", token_name(token)).replace("%%", token.value),
       severity: severity
     });
   }
@@ -304,22 +304,162 @@ export class DocumentParser {
         [TokenType.NON_TERMINAL, new Array<GRMToken>()],
       ])
     };
+    for (let set of DEFAULT_SETS) {
+      this.symbols.defined_symbols.get(DefinitionType.SET)!.set(token_name(set), set);
+    }
+  }
+
+  private incomplete_definition_error(definition: GRMDefinition, expected: string) {
+    let last_symbol = definition.symbols.length > 0
+                    ? definition.symbols[definition.symbols.length-1]
+                    : definition.spanning_symbol;
+    this.errors.push({
+      error_message: "Incomplete " + DefinitionType[definition.type] + 
+                     " definition (expected \"" + expected + "\")",
+      error_range: new Range(last_symbol.location.translate(0, last_symbol.value.length),
+                             this.document.lineAt(last_symbol.location.line).range.end),
+      severity: DiagnosticSeverity.Error
+    });
   }
 
   private validate_param_definition(definition: GRMDefinition) {
-
+    // Seems to be a bit restrictive compared to what the grammar allows
+    // Check equals
+    if (definition.symbols.length < 2) {
+      this.incomplete_definition_error(definition, "= VALUE");
+      return;
+    }
+    if (definition.symbols[0].value !== "=") {
+      this.token_error(definition.symbols[0], "Expected OPERATOR =, but found %T %%");
+    }
+    let param_key = token_name(definition.spanning_symbol);
+    let value_token = definition.symbols[1];
+    if (param_key === "Case Sensitive") {
+      if (value_token.value !== "True" && value_token.value !== "False") {
+        this.token_error(value_token, "Expected boolean values (True|False) got %%");
+      }
+    } else if (param_key === "Start Symbol") {
+      if (value_token.type !== TokenType.NON_TERMINAL) {
+        this.token_error(value_token, "Expected NON-TERMINAL symbol got %T %%");
+      } 
+    } else if (value_token.type !== TokenType.CONST_TERMINAL) {
+      this.token_error(value_token, "Expected string property ('Value') got %T %%");
+    }
+    for (let i=2; i<definition.symbols.length; ++i) {
+      this.token_error(definition.symbols[i], "Unexpected %T %%, expected EOL");
+    }
   }
 
   private validate_set_definition(definition: GRMDefinition) {
-
+    if (definition.symbols.length < 2) {
+      this.incomplete_definition_error(definition, "= SET [+|- SET...]");
+      return;
+    }
+    if (definition.symbols[0].value !== "=") {
+      this.token_error(definition.symbols[0], "Expected OPERATOR =, but found %T %%");
+    }
+    let expect_set = true;
+    for (let i=1; i<definition.symbols.length; ++i) {
+      let symbol = definition.symbols[i];
+      if (symbol.type === TokenType.CONST_SET || symbol.type === TokenType.SET) {
+        if (!expect_set) {
+          this.token_error(symbol, "Expected OPERATOR +/- got %T %N");
+        }
+        expect_set = false;
+      } else if (symbol.type === TokenType.OPERATOR) {
+        if (symbol.value !== "+" && symbol.value !== "-") {
+          this.token_error(symbol, "Expected OPERATOR +/- got %T %N");
+        } else if (expect_set) {
+          this.token_error(symbol, "Expected a SET got %T %%");
+        }
+        expect_set = true;
+      } else {
+        this.token_error(symbol, "Unexpected %T %%, SET definitions must be of form SET [+|- SET...]");
+      }
+    }
   }
 
   private validate_terminal_definition(definition: GRMDefinition) {
-
+    if (definition.symbols.length < 2) {
+      this.incomplete_definition_error(definition, "= REGEX");
+      return;
+    }
+    let start_index = 0;
+    if (definition.spanning_symbol.value === "Comment" &&
+         (definition.symbols[0].value === "Line" ||
+          definition.symbols[0].value === "Start" ||
+          definition.symbols[0].value === "End")
+    ){
+      start_index = 1;
+    }
+    if (definition.symbols[start_index].value !== "=") {
+      this.token_error(definition.symbols[start_index + 1], "Expected OPERATOR =, but found %T %%");
+    }
+    if (definition.symbols[start_index + 1].type !== TokenType.CONST_SET &&
+        definition.symbols[start_index + 1].type !== TokenType.SET &&
+        definition.symbols[start_index + 1].type !== TokenType.TERMINAL &&
+        definition.symbols[start_index + 1].type !== TokenType.CONST_TERMINAL &&
+        definition.symbols[start_index + 1].value !== "(") {
+      this.token_error(definition.symbols[start_index + 1], "Invalid regular expression symbol %T %%");
+    }
+    let bracket_stack: Array<GRMToken> = [];
+    for (let i=start_index + 1; i<definition.symbols.length; ++i) {
+      let symbol = definition.symbols[i];
+      if (symbol.type === TokenType.OPERATOR) {
+        if (symbol.value === "(") {
+          bracket_stack.push(symbol);
+        } else if (symbol.value === ")") {
+          if (bracket_stack.length === 0) {
+            this.token_error(symbol, "Unexpected %T %%");
+          } else {
+            bracket_stack.pop();
+          }
+        } else if (symbol.value === "+" || symbol.value === "?" || symbol.value === "*") {
+          let prev_symbol = definition.symbols[i-1];
+          if (prev_symbol.type === TokenType.OPERATOR && prev_symbol.value !== ")") {
+            this.token_error(symbol, "Kleene %T %% must be preceded by a bracketed expression, SET or TERMINAL symbol");
+          }
+        } else if (symbol.value === "|") {
+          let prev_symbol = definition.symbols[i-1];
+          if (prev_symbol.type === TokenType.OPERATOR && 
+              prev_symbol.value !== ")" &&
+              prev_symbol.value !== "*" &&
+              prev_symbol.value !== "?" &&
+              prev_symbol.value !== "+") {
+            this.token_error(symbol, "Invalid regular expression symbol %T %%");
+          }
+        } else {
+          this.token_error(symbol, "Invalid regular expression symbol %T %%");
+        }
+      } else if (symbol.type !== TokenType.SET && 
+                 symbol.type !== TokenType.TERMINAL &&
+                 symbol.type !== TokenType.CONST_SET &&
+                 symbol.type !== TokenType.CONST_TERMINAL) {
+        this.token_error(symbol, "Invalid regular expression symbol %T %%");
+      }
+    }
+    for (let not_closed of bracket_stack) {
+      this.token_error(not_closed, "Not closed %T %%");
+    }
   }
 
   private validate_non_terminal_definition(definition: GRMDefinition) {
-
+    if (definition.symbols.length < 2) {
+      this.incomplete_definition_error(definition, "::= BCNF");
+      return;
+    }
+    if (definition.symbols[0].value !== "::=") {
+      this.token_error(definition.symbols[0], "Expected OPERATOR ::=, but found %T %%");
+    }
+    for (let i=1; i<definition.symbols.length; ++i) {
+      let symbol = definition.symbols[i];
+      if (symbol.type !== TokenType.CONST_TERMINAL &&
+          symbol.type !== TokenType.TERMINAL &&
+          symbol.type !== TokenType.NON_TERMINAL &&
+          symbol.value !== "|") {
+        this.token_error(symbol, "Invalid %T %% in BCNF rule");
+      }
+    }
   }
 
   private check_errors() {
@@ -335,10 +475,12 @@ export class DocumentParser {
       }
       let defined_symbol = definition.spanning_symbol;
       let definition_map = this.symbols.defined_symbols.get(definition.type)!;
-      if (definition_map.has(token_name(defined_symbol))) {
-        this.token_error(defined_symbol, "Redefinition of %T '%N'");
-      } else {
-        definition_map.set(token_name(defined_symbol), defined_symbol);
+      if (defined_symbol.value !== "Comment") {
+        if (definition_map.has(token_name(defined_symbol))) {
+          this.token_error(defined_symbol, "Redefinition of %T '%N'");
+        } else {
+          definition_map.set(token_name(defined_symbol), defined_symbol);
+        }
       }
 
       switch (definition.type) {
@@ -359,8 +501,11 @@ export class DocumentParser {
           break;
       }
 
+      let start_index = defined_symbol.value === "Comment"
+                      ? 1 : 0
       // parse other symbols:
-      for (let symbol of definition.symbols) {
+      for (let i=start_index; i<definition.symbols.length; ++i) {
+        let symbol = definition.symbols[i];
         // undefiled chain through ? skips if not found
         this.symbols.used_symbols.get(symbol.type)?.push(symbol);
       }
@@ -393,6 +538,8 @@ export class DocumentParser {
       eof = advanced < 0;
       first_in_line = advanced > 0;
     }
+
+    this.check_errors();
   }
 
   public update_diagnostics() {
@@ -463,7 +610,7 @@ export class DocumentParser {
     if (defined === undefined) {
       return tokens;
     }
-    let result = tokens.filter((token) => defined!.has(token_name(token)));
+    let result = tokens.filter((token) => !defined!.has(token_name(token)));
 
     return result;
   }
