@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { GRMAutoComplete } from "./autocomplete";
+import { GRMAutoComplete } from "./grm_completion";
 import { document_changed, document_closed, document_opend } from './grm_editor';
 
 declare global {
