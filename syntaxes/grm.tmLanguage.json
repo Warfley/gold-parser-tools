@@ -50,10 +50,10 @@
 			"patterns": []
 		},
 		"ConstSets": {
-			"name": "constant.regexp",
-			"begin": "\\[",
-			"end": "\\]|\\n",
-			"patterns": []
+			"patterns": [{
+				"name": "constant.regexp",
+				"match": "\\[([^\\[\\]']|'[^']*')+\\]"
+			}]
 		},
 		"NonTerminals": {
 			"name": "variable.nonterminal",

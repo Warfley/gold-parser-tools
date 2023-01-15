@@ -5,9 +5,9 @@ import { DocumentParser, GRMToken, DefinitionType, TokenType, GRMDefinition } fr
 export class GRMAutoComplete implements CompletionItemProvider {
   private parser?: DocumentParser = undefined;
 
-  private add_symbols(symbol_type: TokenType, 
-                      list: CompletionList, 
-                      replace_token?: GRMToken, 
+  private add_symbols(symbol_type: TokenType,
+                      list: CompletionList,
+                      replace_token?: GRMToken,
                       only_undefined: boolean = false) {
     if (this.parser === undefined) {
       return;
@@ -18,7 +18,7 @@ export class GRMAutoComplete implements CompletionItemProvider {
       // Only add those that match the currently replaced token
       return;
     }
-    let symbols = only_undefined 
+    let symbols = only_undefined
                 ? this.parser.undefined_tokens(symbol_type)
                 : this.parser.all_tokens(symbol_type);
 
@@ -68,10 +68,10 @@ export class GRMAutoComplete implements CompletionItemProvider {
       for (let i=last_index - 1; i>=0; --i) {
         error_token = current_definition.symbols[i];
         if (error_token.type === TokenType.UNKNOWN && (
-            error_token.value.endsWith("<") || 
-            error_token.value.endsWith("[") || 
-            error_token.value.endsWith("{") || 
-            error_token.value.endsWith("'") || 
+            error_token.value.endsWith("<") ||
+            error_token.value.endsWith("[") ||
+            error_token.value.endsWith("{") ||
+            error_token.value.endsWith("'") ||
             error_token.value.endsWith("\"")
         )) {
           break; // Found the start of an unclosed definition
@@ -128,6 +128,7 @@ export class GRMAutoComplete implements CompletionItemProvider {
 
     if (last_definition === undefined ||
         last_definition.type === DefinitionType.ERROR) {
+      this.add_symbols(TokenType.PARAMETER, result, replace_token, true);
       this.add_symbols(TokenType.SET, result, replace_token, true);
       this.add_symbols(TokenType.TERMINAL, result, replace_token, true);
       this.add_symbols(TokenType.NON_TERMINAL, result, replace_token, true);
@@ -151,6 +152,7 @@ export class GRMAutoComplete implements CompletionItemProvider {
         break;
 
       case DefinitionType.PARAMETER:
+        this.add_symbols(TokenType.PARAMETER, result, replace_token, true);
         this.add_symbols(TokenType.NON_TERMINAL, result, replace_token);
         break;
       }

@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import internal = require("stream");
-import { Diagnostic, DiagnosticSeverity, LinkedEditingRangeProvider, Position, Range, TextDocument } from "vscode";
+import { Diagnostic, DiagnosticSeverity, Location, Position, Range, TextDocument } from "vscode";
 
-export enum TokenType {UNKNOWN=0, TERMINAL, NON_TERMINAL, SET, PARAMETER, CONST_TERMINAL, CONST_SET, OPERATOR};
-const MAX_TOKEN: number = TokenType.OPERATOR;
+export enum TokenType {UNKNOWN=0, TERMINAL, NON_TERMINAL, SET, PARAMETER, CONST_TERMINAL, OPERATOR, CONST_SET};
+const MAX_TOKEN: number = TokenType.CONST_SET;
 
 export interface GRMToken {
   value: string;
@@ -92,9 +92,18 @@ const end_of_comment_expr = new RegExp("\\*!");
 // Set Token: {.+}
 // Parameter token: ".+"
 // Const Terminal token: '.*' ('' is allowed)
-// const set token: [.+]
 // Operators: =|::=|\||\?|\+|\-|\*|\(|\)|@
-const token_expr = new RegExp("([A-Za-z0-9_.][A-Za-z0-9_.-]*)|<([A-Za-z0-9\\s_.-]+)>|{(.+?)}|\"(.+?)\"|'(.*?)'|(\\[.+?\\])|(=|::=|\\||\\?|\\+|\\-|\\*|\\(|\\)|@)");
+// const set token: \[([^\[\]']|'[^']*')+\]
+const token_expr = new RegExp("([A-Za-z0-9_.][A-Za-z0-9_.-]*)|<([A-Za-z0-9\\s_.-]+)>|{(.+?)}|\"(.+?)\"|'(.*?)'|(=|::=|\\||\\?|\\+|\\-|\\*|\\(|\\)|@)|(\\[([^\\[\\]']|'[^']*')+\\])");
+
+const required_parameter = [
+    "Name",
+    "Version",
+    "Author",
+    "About",
+    "Case Sensitive",
+    "Start Symbol",
+];
 
 export class DocumentParser {
   private document!: TextDocument;
@@ -304,7 +313,7 @@ export class DocumentParser {
   private incomplete_definition_error(definition: GRMDefinition, expected: string) {
     let last_symbol = definition.symbols[definition.symbols.length - 1];
     this.errors.push({
-      error_message: "Incomplete " + DefinitionType[definition.type] + 
+      error_message: "Incomplete " + DefinitionType[definition.type] +
                      " definition (expected \"%T " + expected + "\")",
       error_range: new Range(last_symbol.location.translate(0, last_symbol.value.length),
                              this.document.lineAt(last_symbol.location.line).range.end),
@@ -313,10 +322,8 @@ export class DocumentParser {
   }
 
   private validate_param_definition(definition: GRMDefinition) {
-    // Seems to be a bit restrictive compared to what the grammar allows
-    // Check equals
     if (definition.symbols.length < 3) {
-      this.incomplete_definition_error(definition, "= VALUE");
+      this.incomplete_definition_error(definition, "= VALUE [VALUES ...]");
       return;
     }
     if (definition.symbols[1].value !== "=") {
@@ -324,19 +331,24 @@ export class DocumentParser {
     }
     let param_key = token_name(definition.symbols[0]);
     let value_token = definition.symbols[2];
-    if (param_key === "Case Sensitive") {
-      if (value_token.value !== "True" && value_token.value !== "False") {
-        this.token_error(value_token, "Expected boolean values (True|False) got %%");
-      }
-    } else if (param_key === "Start Symbol") {
-      if (value_token.type !== TokenType.NON_TERMINAL) {
-        this.token_error(value_token, "Expected NON-TERMINAL symbol got %T %%");
-      } 
-    } else if (value_token.type !== TokenType.CONST_TERMINAL) {
-      this.token_error(value_token, "Expected string property ('Value') got %T %%");
+    if (param_key === "Case Sensitive" &&
+        value_token.value !== "True" &&
+        value_token.value !== "False") {
+      this.token_error(value_token, "Expected boolean values (True|False) got %T %%");
+    } else if (param_key === "Start Symbol" &&
+               value_token.type !== TokenType.NON_TERMINAL) {
+      this.token_error(value_token, "Expected NON-TERMINAL symbol got %T %%");
     }
-    for (let i=3; i<definition.symbols.length; ++i) {
-      this.token_error(definition.symbols[i], "Unexpected %T %%, expected EOL");
+    if (param_key === "Name" ||
+        param_key === "Version" ||
+        param_key === "Author" ||
+        param_key === "About") {
+      if (value_token.type !== TokenType.CONST_TERMINAL) {
+        this.token_error(value_token, "Expected a single quoted string literal, got %T %%");
+      }
+      for (let i=3; i<definition.symbols.length; ++i) {
+        this.token_error(definition.symbols[i], "Unexpected %T %%, expected EOL");
+      }
     }
   }
 
@@ -415,7 +427,7 @@ export class DocumentParser {
           }
         } else if (symbol.value === "|") {
           let prev_symbol = definition.symbols[i-1];
-          if (prev_symbol.type === TokenType.OPERATOR && 
+          if (prev_symbol.type === TokenType.OPERATOR &&
               prev_symbol.value !== ")" &&
               prev_symbol.value !== "*" &&
               prev_symbol.value !== "?" &&
@@ -425,7 +437,7 @@ export class DocumentParser {
         } else {
           this.token_error(symbol, "Invalid regular expression symbol %T %%");
         }
-      } else if (symbol.type !== TokenType.SET && 
+      } else if (symbol.type !== TokenType.SET &&
                  symbol.type !== TokenType.TERMINAL &&
                  symbol.type !== TokenType.CONST_SET &&
                  symbol.type !== TokenType.CONST_TERMINAL) {
@@ -495,6 +507,12 @@ export class DocumentParser {
           break;
       }
 
+      if (definition.type === DefinitionType.PARAMETER &&
+          defined_symbol.value !== "Start Symbol") {
+        // skip unused analysis for not used tokens in parameters
+        continue;
+      }
+
       let start_index = defined_symbol.value === "Comment"
                       ? 2 : 1;
       // parse other symbols:
@@ -505,7 +523,8 @@ export class DocumentParser {
       }
     }
 
-    // Collect not used errors:
+    // Collect undefined token errors:
+    this.undefined_tokens(TokenType.PARAMETER).forEach((token) => this.token_error(token, "Missing required parameter %N"));
     this.undefined_tokens(TokenType.SET, false).forEach((token) => this.token_error(token, "Undefined SET referenced %%"));
     this.undefined_tokens(TokenType.TERMINAL, false).forEach((token) => this.token_error(token, "Undefined TERMINAL referenced %%, if you want to match the token as string please use '%%'", DiagnosticSeverity.Information));
     this.undefined_tokens(TokenType.NON_TERMINAL, false).forEach((token) => this.token_error(token, "Undefined NON-TERMINAL referenced %%"));
@@ -590,7 +609,26 @@ export class DocumentParser {
     return result;
   }
 
+  private missing_parameter(): Array<GRMToken> {
+    let parameters = this.symbols.defined_symbols.get(DefinitionType.PARAMETER);
+    let missing = required_parameter.filter((param) => !parameters!.has(param));
+    let result = [];
+
+    for (let param of missing) {
+      result.push({
+            type: TokenType.PARAMETER,
+            value: '"' + param + '"',
+            location: new Position(0, 0)
+      });
+    }
+
+    return result;
+  }
+
   public undefined_tokens(type: TokenType, unique: boolean = true): Array<GRMToken> {
+    if (type === TokenType.PARAMETER) {
+      return this.missing_parameter();
+    }
     let tokens = this.all_tokens(type, unique);
     let defined = this.symbols.defined_symbols.get(
         type === TokenType.SET
