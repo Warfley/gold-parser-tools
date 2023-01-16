@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import { TextDocument, Position, CancellationToken, CompletionItemProvider, CompletionItem, CompletionList, ProviderResult, CompletionItemKind, CompletionContext, languages, Range } from "vscode";
+import { TextDocument, Position, CancellationToken, CompletionItemProvider, CompletionItem, CompletionList, ProviderResult, CompletionItemKind, CompletionContext, Range } from "vscode";
 import { DocumentParser, GRMToken, DefinitionType, TokenType, GRMDefinition } from "./grm_parser";
 
 export class GRMAutoComplete implements CompletionItemProvider {
@@ -40,13 +40,10 @@ export class GRMAutoComplete implements CompletionItemProvider {
 
   private backtrack_token(document: TextDocument, position: Position, current_definition: GRMDefinition): GRMToken|undefined {
     let last_index = 0;
-    for (; last_index<current_definition.symbols.length; ++last_index) {
-      if (current_definition.symbols[last_index].location.isAfter(position)) {
+    for (; last_index<current_definition.symbols.length - 1; ++last_index) {
+      if (current_definition.symbols[last_index + 1].location.isAfter(position.translate(0, -1))) {
         break;
       }
-    }
-    if (last_index === current_definition.symbols.length) {
-      --last_index;
     }
     let last_token = current_definition.symbols[last_index];
     if (last_token.location.line !== position.line) { // If first in new line it cannot be part of another token

@@ -30,47 +30,25 @@ export interface GRMDefinition {
   type: DefinitionType;
 }
 
+function default_set(name: string): GRMToken {
+  return {
+    value: name,
+    type: TokenType.SET,
+    location: new Position(0, 0)
+  };
+}
+
 const DEFAULT_SETS: Array<GRMToken> = [
-  {
-    value: "{Space}",
-    type: TokenType.SET,
-    location: new Position(0, 0)
-  },
-  {
-    value: "{Digit}",
-    type: TokenType.SET,
-    location: new Position(0, 0)
-  },
-  {
-    value: "{Letter}",
-    type: TokenType.SET,
-    location: new Position(0, 0)
-  },
-  {
-    value: "{Printable}",
-    type: TokenType.SET,
-    location: new Position(0, 0)
-  },
-  {
-    value: "{CR}",
-    type: TokenType.SET,
-    location: new Position(0, 0)
-  },
-  {
-    value: "{LF}",
-    type: TokenType.SET,
-    location: new Position(0, 0)
-  },
-  {
-    value: "{Alphanumeric}",
-    type: TokenType.SET,
-    location: new Position(0, 0)
-  },
-  {
-    value: "{Whitespace}",
-    type: TokenType.SET,
-    location: new Position(0, 0)
-  }
+  default_set("{Space}"),
+  default_set("{Digit}"),
+  default_set("{Letter}"),
+  default_set("{Printable}"),
+  default_set("{CR}"),
+  default_set("{LF}"),
+  default_set("{Alphanumeric}"),
+  default_set("{Whitespace}"),
+  default_set("{VT}"),
+  default_set("{HT}")
 ];
 
 export function token_name(token: GRMToken): string {
@@ -79,9 +57,9 @@ export function token_name(token: GRMToken): string {
     case TokenType.NON_TERMINAL:
     case TokenType.PARAMETER:
     case TokenType.SET:
-      return token.value.substring(1, token.value.length-1).trim();
+      return token.value.substring(1, token.value.length-1).trim().toLowerCase();
   }
-  return token.value;
+  return token.value.toLocaleLowerCase();
 }
 
 const advance_expr = new RegExp("!\\*|[^\\s]");
@@ -97,12 +75,12 @@ const end_of_comment_expr = new RegExp("\\*!");
 const token_expr = new RegExp("([A-Za-z0-9_.][A-Za-z0-9_.-]*)|<([A-Za-z0-9\\s_.-]+)>|{(.+?)}|\"(.+?)\"|'(.*?)'|(=|::=|\\||\\?|\\+|\\-|\\*|\\(|\\)|@)|(\\[([^\\[\\]']|'[^']*')+\\])");
 
 const required_parameter = [
-    "Name",
-    "Version",
-    "Author",
-    "About",
-    "Case Sensitive",
-    "Start Symbol",
+    "name",
+    "version",
+    "author",
+    "about",
+    "case sensitive",
+    "start symbol",
 ];
 
 export class DocumentParser {
@@ -524,7 +502,14 @@ export class DocumentParser {
     }
 
     // Collect undefined token errors:
-    this.undefined_tokens(TokenType.PARAMETER).forEach((token) => this.token_error(token, "Missing required parameter %N"));
+    for (let token of this.undefined_tokens(TokenType.PARAMETER)) {
+      if (token.value === '"Start Symbol"') {
+        this.token_error(token, "Missing required parameter %N");
+      } else {
+        this.token_error(token, "Missing default parameter %N",
+                         DiagnosticSeverity.Warning);
+      }
+    }
     this.undefined_tokens(TokenType.SET, false).forEach((token) => this.token_error(token, "Undefined SET referenced %%"));
     this.undefined_tokens(TokenType.TERMINAL, false).forEach((token) => this.token_error(token, "Undefined TERMINAL referenced %%, if you want to match the token as string please use '%%'", DiagnosticSeverity.Information));
     this.undefined_tokens(TokenType.NON_TERMINAL, false).forEach((token) => this.token_error(token, "Undefined NON-TERMINAL referenced %%"));

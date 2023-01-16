@@ -37,8 +37,16 @@
     }],
     "commands": [
       {
-        "command": "gold-parser-tools.helloWorld",
-        "title": "Hello World"
+        "command": "gold-parser-tools.compileGrammar",
+        "title": "GOLD: Compile Grammar"
+      }
+    ],
+    "keybindings":[
+      {
+        "command": "gold-parser-tools.compileGrammar",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "editorLangId == grm"
       }
     ]
   },

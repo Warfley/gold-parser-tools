@@ -1,26 +1,15 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
 import { GRMAutoComplete } from "./grm_completion";
 import { document_changed, document_closed, document_opend } from './grm_editor';
+import { check_paths, on_compile_command } from './grm_tools';
 
 declare global {
 	var diagnostics_collection: vscode.DiagnosticCollection;
 }
 
-function check_path(): boolean {
-	let config = vscode.workspace.getConfiguration("gold");
-
-	let gold_path: string|undefined = config.get("path");
-	if (gold_path === undefined) {
-		return false;
-	}
-	return fs.existsSync(gold_path)
-		  && fs.existsSync(path.join(gold_path, "GOLDbuild.exe"))
-		  && fs.existsSync(path.join(gold_path, "GOLDtest.exe"))
-		  && fs.existsSync(path.join(gold_path, "GOLDprog.exe"))
-		  && fs.existsSync(path.join(gold_path, "GOLDwebpage.exe"));
+async function test() {
+	vscode.window.showErrorMessage("Test");
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -33,7 +22,9 @@ export function activate(context: vscode.ExtensionContext) {
 	let change_event = vscode.workspace.onDidChangeTextDocument(document_changed);
 	let close_event = vscode.workspace.onDidCloseTextDocument(document_closed);
 
-	if (!check_path()) {
+	let compile_command = vscode.commands.registerCommand("gold-parser-tools.compileGrammar", on_compile_command);
+
+	if (!check_paths()) {
 		vscode.window.showErrorMessage("GOLD cmd binaries directory not set correctly. Please set 'gold.path' property");
 	}
 
