@@ -1,9 +1,12 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import { DiagnosticSeverity, workspace, TextDocument, window, Diagnostic, commands } from "vscode";
+import { DiagnosticSeverity, workspace, TextDocument, window, Diagnostic, commands, QuickPickItemKind } from "vscode";
 import * as fs from 'fs';
 import * as path from 'path';
 import { platform } from "process";
 import { spawnSync } from "child_process";
+import { GTFileReader, load_grammar_tables } from "./engine/loader";
+import { dfa_match, Token } from "./engine/lexer";
+import { LRParseTreeNode, parse_string, SymbolType } from "./engine/parser";
 
 export const BUILD_EXE = "GOLDbuild.exe";
 export const TEST_EXE = "GOLDtest.exe";
@@ -138,7 +141,7 @@ function lookup_errors(log_file: string, document: TextDocument): Promise<boolea
   });
 }
 
-export async function on_compile_command(document?: TextDocument): Promise<boolean> {
+export async function on_compile_command(document?: TextDocument): Promise<false|string> {
   if (document === undefined) {
     document = window.activeTextEditor?.document;
   }
@@ -165,5 +168,71 @@ export async function on_compile_command(document?: TextDocument): Promise<boole
 
   commands.executeCommand("workbench.actions.view.problems");
 
-  return success;
+  if (!success) {
+    return false;
+  }
+  return compile_result;
+}
+
+export async function on_parse_command(document?: TextDocument, grammar?: string): Promise<boolean> {
+  if (document === undefined) {
+    document = window.activeTextEditor?.document;
+  }
+
+  if (document === undefined) {
+    return false;
+  }
+
+  if (grammar === undefined) {
+    let grammars = await workspace.findFiles("**/*.grm");
+    grammars = grammars.concat(await workspace.findFiles("**/*egt"));
+    grammars = grammars.concat(await workspace.findFiles("**/*.cgt"));
+    let selection = await window.showQuickPick(grammars.map((grammar_path) => {
+      return {
+        label: path.basename(grammar_path.path),
+        description: workspace.asRelativePath(grammar_path.path),
+        uri: grammar_path
+      };
+    }), {canPickMany: false});
+    if (selection !== undefined) {
+      grammar = selection.uri.fsPath;
+    }
+  }
+  if (grammar === undefined) {
+    return false;
+  }
+  if (grammar.endsWith(".grm")) {
+    let doc = await workspace.openTextDocument(grammar);
+    let compiled = await on_compile_command(doc);
+    if (compiled === false) {
+      return false;
+    }
+    grammar = compiled;
+  }
+  if (!grammar.endsWith(".cgt") && !grammar.endsWith(".egt")) {
+    window.showErrorMessage("Requires Gold Grammar Tables (.cgt|.egt) for parsing");
+    return false;
+  }
+
+  if (!fs.existsSync(grammar)) {
+    window.showErrorMessage("GOLD Parser Tools extension currently only works for local workspaces, this seems to be a remote workspace");
+    return false;
+  }
+
+  let grammar_reader = await GTFileReader.from_file(grammar);
+  let grammar_tables = load_grammar_tables(grammar_reader);
+
+  let document_string = document.getText();
+
+  let result = await parse_string(document_string, grammar_tables.dfa, grammar_tables.lalr, undefined, (state, token, stack) => {
+    let tree = stack[stack.length - 1].parse_tree;
+    let s = tree.symbol.name + " ::= ";
+    for (let c of tree.children as Array<LRParseTreeNode>) {
+      s += c.symbol.name + " ";
+    }
+    console.log(s);
+    return new Promise<void>((resolve) => resolve());
+  });
+
+  return true;
 }

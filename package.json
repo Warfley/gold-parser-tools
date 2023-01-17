@@ -24,12 +24,19 @@
         }
       }
     },
-    "languages": [{
-      "id": "grm",
-      "aliases": ["Gold Grammar", "grm"],
-      "extensions": [".grm"],
-      "configuration": "./language-configuration.json"
-    }],
+    "languages": [
+      {
+        "id": "grm",
+        "aliases": ["Gold Grammar", "grm"],
+        "extensions": [".grm"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "cgt",
+        "aliases": ["Compiled Grammar Table", "cgt"],
+        "extensions": [".cgt", ".egt"]
+      }
+    ],
     "grammars": [{
       "language": "grm",
       "scopeName": "source.grm",
@@ -39,6 +46,10 @@
       {
         "command": "gold-parser-tools.compileGrammar",
         "title": "GOLD: Compile Grammar"
+      },
+      {
+        "command": "gold-parser-tools.parseWithGrammar",
+        "title": "GOLD: Parse current file"
       }
     ],
     "keybindings":[
@@ -47,6 +58,12 @@
         "key": "ctrl+alt+c",
         "mac": "cmd+alt+c",
         "when": "editorLangId == grm"
+      },
+      {
+        "command": "gold-parser-tools.parseWithGrammar",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p",
+        "when": "editorLangId == grm || editorLangId == cgt"
       }
     ]
   },

@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import { GRMAutoComplete } from "./grm_completion";
 import { document_changed, document_closed, document_opend } from './grm_editor';
-import { check_paths, on_compile_command } from './grm_tools';
+import { check_paths, on_compile_command, on_parse_command } from './grm_tools';
 
 declare global {
 	var diagnostics_collection: vscode.DiagnosticCollection;
@@ -23,6 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
 	let close_event = vscode.workspace.onDidCloseTextDocument(document_closed);
 
 	let compile_command = vscode.commands.registerCommand("gold-parser-tools.compileGrammar", on_compile_command);
+	let parse_command = vscode.commands.registerCommand("gold-parser-tools.parseWithGrammar", on_parse_command);
 
 	if (!check_paths()) {
 		vscode.window.showErrorMessage("GOLD cmd binaries directory not set correctly. Please set 'gold.path' property");
@@ -33,6 +34,8 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(open_event);
 	context.subscriptions.push(change_event);
 	context.subscriptions.push(close_event);
+	context.subscriptions.push(compile_command);
+	context.subscriptions.push(parse_command);
 }
 
 // This method is called when your extension is deactivated

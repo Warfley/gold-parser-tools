@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 
-import { ParserSymbol } from "./parser";
+import { ParserSymbol, SymbolType } from "./parser";
 
 interface CharRange {
   start: number;
   end: number;
 }
 
-class CharRangeSet {
+export class CharRangeSet {
   private ranges: Array<CharRange> = [];
   private codepage: number = 0; // How is this encoded?
 
@@ -30,7 +30,7 @@ class CharRangeSet {
   public contains(value: string): boolean {
     let code_point = Buffer.from(value, this.encoding()).readUint16LE();
     for (let range of this.ranges) {
-      if (code_point >= range.start ||
+      if (code_point >= range.start &&
           code_point <= range.end) {
         return true;
       }
@@ -42,7 +42,7 @@ class CharRangeSet {
 
 type SimpleCharset = Set<string>;
 
-type CharSet = SimpleCharset|CharRangeSet;
+export type CharSet = SimpleCharset|CharRangeSet;
 
 function char_in_set(char: string, charset: CharSet) {
   if (charset instanceof CharRangeSet) {
@@ -57,6 +57,7 @@ interface DFAEdge {
 }
 
 export interface DFAState {
+  index: number;
   edges: Array<DFAEdge>;
   result?: ParserSymbol;
 }
@@ -67,7 +68,7 @@ export interface Token {
   position: number;
 }
 
-export function dfa_match(str: string, start_pos: number, dfa: DFAState): "EOF"|Token|undefined {
+export function dfa_match(str: string, start_pos: number, dfa: DFAState): Token|undefined {
   let current_state = dfa;
   let last_match: Token|undefined = undefined;
 
@@ -88,11 +89,16 @@ export function dfa_match(str: string, start_pos: number, dfa: DFAState): "EOF"|
       last_match = {
         value: str.substring(start_pos, i+1),
         symbol: current_state.result,
-        position: i
+        position: start_pos
       };
     }
   }
   return last_match === undefined
-       ? "EOF"
+       ? { position: str.length,
+           symbol: {
+             name: "EOF",
+             type: SymbolType.FILE_END
+           },
+           value: "EOF" }
        : last_match;
 }
