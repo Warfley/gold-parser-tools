@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import * as fs from "fs";
-import { buffer } from "stream/consumers";
 import { CharRangeSet, CharSet, DFAState } from "./lexer";
 import { LRAction, LRActionType, LRState, MatchGroup, ParserRule, ParserSymbol, SymbolType } from "./parser";
 

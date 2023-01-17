@@ -1,11 +1,10 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import { DiagnosticSeverity, workspace, TextDocument, window, Diagnostic, commands, QuickPickItemKind } from "vscode";
+import { DiagnosticSeverity, workspace, TextDocument, window, Diagnostic, commands } from "vscode";
 import * as fs from 'fs';
 import * as path from 'path';
 import { platform } from "process";
 import { spawnSync } from "child_process";
 import { GTFileReader, load_grammar_tables } from "./engine/loader";
-import { dfa_match, Token } from "./engine/lexer";
 import { LRParseTreeNode, parse_string, SymbolType } from "./engine/parser";
 
 export const BUILD_EXE = "GOLDbuild.exe";

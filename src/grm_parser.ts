@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import internal = require("stream");
-import { Diagnostic, DiagnosticSeverity, Location, Position, Range, TextDocument } from "vscode";
+import { Diagnostic, DiagnosticSeverity, Position, Range, TextDocument } from "vscode";
 
 export enum TokenType {UNKNOWN=0, TERMINAL, NON_TERMINAL, SET, PARAMETER, CONST_TERMINAL, OPERATOR, CONST_SET};
 const MAX_TOKEN: number = TokenType.CONST_SET;
