@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 
-import { DFAState, dfa_match, Token } from "./lexer";
+import { DFAState, GroupError, MatchGroup, next_token, Token } from "./lexer";
 
 export enum LRActionType {
   SHIFT = 1,
@@ -29,17 +29,6 @@ export interface ParserSymbol {
 export interface ParserRule {
   produces: ParserSymbol;
   consumes: Array<ParserSymbol>;
-}
-
-export interface MatchGroup {
-  name: string;
-  symbol: ParserSymbol;
-  start_symbol: ParserSymbol;
-  end_symbol: ParserSymbol;
-  advance_mode: "Char"|"Token";
-  ending_mode: "Open"|"Closed";
-
-  nestable_groups: Set<string>;
 }
 
 export interface LRAction {
@@ -140,107 +129,6 @@ interface LexerError {
 interface ParserError {
   last_token: "EOF"|Token;
   stack: LRStack;
-}
-
-interface GroupError {
-  groups: GroupStack;
-}
-
-interface GroupStackItem {
-  group: MatchGroup,
-  start_token: Token
-}
-
-type GroupStack = Array<GroupStackItem>;
-
-function advance_mode(stack: GroupStack): "Char"|"Token" {
-  return stack.length === 0
-      ? "Token"
-      : stack[stack.length - 1].group.advance_mode;
-}
-
-function next_increment(stack: GroupStack, token?: Token): number {
-  if (token === undefined || advance_mode(stack) === "Char") {
-    return 1;
-  }
-  return token.value.length;
-}
-
-function close_group(stack: GroupStack, end_pos: number, str: string): Token {
-  let top_group = stack.pop()!;
-  return {
-    position: top_group.start_token.position,
-    symbol: top_group.group.symbol,
-    value: str.substring(top_group.start_token.position,
-                         end_pos)
-  };
-}
-
-function next_token(str: string, position: number, dfa: DFAState): Token|GroupError|undefined {
-  let group_stack: GroupStack = [];
-
-  let token: Token|undefined = undefined;
-
-  for (let curr_pos=position;
-       curr_pos <= str.length && // <= because on the first out of bounds char will get EOF
-      (token === undefined || // If no token was read we advance 1 char
-       group_stack.length > 0); // If a group is still open we try to close it
-      curr_pos += next_increment(group_stack, token)) {
-
-    token = dfa_match(str, curr_pos, dfa);
-    if (token === undefined) {
-      // Not in group: parser error
-      if (group_stack.length === 0) {
-        return undefined;
-      }
-      // In group we accept anything
-      continue;
-    }
-
-    if (token.symbol.type === SymbolType.FILE_END) {
-      // On EOF stop reading
-      break;
-    }
-
-    let stack_top = group_stack.length > 0
-                  ? group_stack[group_stack.length - 1]
-                  : undefined;
-
-    if (token.symbol.type === SymbolType.GROUP_START &&
-       (stack_top === undefined ||
-        stack_top.group.nestable_groups.has(token.symbol.group!.name))) {
-      // New group started: push to stack
-      group_stack.push({
-        group: token.symbol.group!,
-        start_token: token
-      });
-      continue;
-    }
-    if (stack_top !== undefined &&
-        stack_top.group.end_symbol.name === token.symbol.name) {
-      let end_pos = token.position + token.value.length;
-      if (token.symbol.name.toLowerCase() === "newline") {
-        // Special handling for groups ending on newline: don't consume newline
-        end_pos = token.position;
-      }
-      token = close_group(group_stack, end_pos, str);
-      // If there are no more groups the for loop will exit and token will be returned
-      continue;
-    }
-  }
-
-  // Check for still open groups
-  while (group_stack.length > 0) {
-    let top = group_stack[group_stack.length - 1];
-    if (top.group.ending_mode === "Open") {
-      // Open groups can be closed at EOF
-      token = close_group(group_stack, str.length, str);
-    } else { // Closed groups must be finished
-      return {groups: group_stack};
-    }
-  }
-
-  return token;
 }
 
 type DFAEvent = (token: Token, ...args: any[]) => Promise<void>;

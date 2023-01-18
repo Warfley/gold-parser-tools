@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import * as fs from "fs";
-import { CharRangeSet, CharSet, DFAState } from "./lexer";
-import { LRAction, LRActionType, LRState, MatchGroup, ParserRule, ParserSymbol, SymbolType } from "./parser";
+import { CharRangeSet, CharSet, DFAState, MatchGroup } from "./lexer";
+import { LRAction, LRActionType, LRState, ParserRule, ParserSymbol, SymbolType } from "./parser";
 
 enum GrammarDataType {
   BOOLEAN = "B".charCodeAt(0),
