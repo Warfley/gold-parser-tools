@@ -13,7 +13,7 @@ export enum SymbolType {
   NON_TERMINAL = 0,
   TERMINAL = 1,
   SKIP_SYMBOLS = 2, // Whitespaces, newlines, etc.
-  FILE_END = 3,
+  EOF = 3,
   GROUP_START = 4,
   GROUP_END = 5,
   COMMENT_LINE = 6,
@@ -39,6 +39,7 @@ export interface LRAction {
 export interface LRState {
   index: number;
   edges: Map<string, LRAction|"Accept">;
+  goto: Map<string, LRAction>;
 }
 
 export interface LRParseTreeNode {
@@ -57,17 +58,17 @@ enum LRStepResult { ACCEPT, SHIFT, REDUCE, ERROR }
 
 function LALR_step(look_ahead: Token, stack: LRStack): LRStepResult {
   let current_state = stack[stack.length-1].current_state;
-  let action = current_state.edges.get(look_ahead.symbol.name);
+  let transition = current_state.edges.get(look_ahead.symbol.name);
 
-  if (action === undefined) {
+  if (transition === undefined) {
     return LRStepResult.ERROR;
   }
-  if (action === "Accept") {
+  if (transition === "Accept") {
     return LRStepResult.ACCEPT;
   }
-  if (action.type === LRActionType.SHIFT) {
+  if (transition.type === LRActionType.SHIFT) {
     stack.push({
-      current_state: action.target as LRState,
+      current_state: transition.target as LRState,
       parse_tree: {
         symbol: look_ahead.symbol,
         children: look_ahead
@@ -77,25 +78,17 @@ function LALR_step(look_ahead: Token, stack: LRStack): LRStepResult {
   } // else if (action.type === LRActionType.REDUCE)
 
   // Reduction
-  let rule = action.target as ParserRule;
+  let rule = transition.target as ParserRule;
   if (stack.length < rule.consumes.length) {
     throw new Error("State mismatch");
   }
   let new_symbol = rule.produces;
   let consumes = rule.consumes.map(() => stack.pop()!.parse_tree).reverse();
   let top_state = stack[stack.length-1].current_state;
-  let next_state = top_state.edges.get(rule.produces.name);
+  let next_state = top_state.goto.get(rule.produces.name);
 
   if (next_state === undefined) {
-    throw new Error("Symbol not found");
-  }
-
-  if (next_state === "Accept") {
-    throw new Error("Unexpected Accept");
-  }
-
-  if (next_state.type === LRActionType.GOTO) {
-    throw new Error("GOTO Expected");
+    throw new Error("GOTO not found for Symbol");
   }
 
   stack.push({
@@ -127,7 +120,7 @@ interface LexerError {
 }
 
 interface ParserError {
-  last_token: "EOF"|Token;
+  last_token: "(EOF)"|Token;
   stack: LRStack;
 }
 
@@ -193,6 +186,6 @@ export async function parse_string(str: string, dfa: DFAState, lalr: LRState,
   }
   return {
     stack: stack,
-    last_token: "EOF"
+    last_token: "(EOF)"
   };
 }

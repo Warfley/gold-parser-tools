@@ -296,6 +296,24 @@ function parse_symbol(file: GTFileReader, symbols: Array<ParserSymbol>) {
   let name = file.read_string();
   let type: SymbolType = file.read_int();
 
+  // To allow matching only on the basis of the name
+  // This removes any ambiguity from similar named symbols
+  switch (type) {
+  case SymbolType.TERMINAL:
+    name = "'" + name + "'";
+    break;
+  case SymbolType.NON_TERMINAL:
+    name = "<" + name + ">";
+    break;
+  case SymbolType.EOF:
+    name = "(EOF)";
+  case SymbolType.SKIP_SYMBOLS:
+    name = "[" + name + "]";
+  case SymbolType.GROUP_START:
+    name = "/" + name + "/";
+    name = "\\" + name + "\\";
+  }
+
   symbols[index] = {
     name: name,
     type: type
@@ -404,7 +422,8 @@ function build_lr(initial: number,
     let parsed = states[current];
     let result: LRState = {
       index: current,
-      edges: new Map<string, LRAction>()
+      edges: new Map<string, LRAction>(),
+      goto: new Map<string, LRAction>()
     };
     lr_map.set(current, result);
 
@@ -426,7 +445,7 @@ function build_lr(initial: number,
       case LRActionType.GOTO: // GOTO and shift have the same "Format"
       case LRActionType.SHIFT:
         edge = {
-          type: LRActionType.SHIFT,
+          type: transition.action_type,
           target: recursive_helper(transition.value)
         };
         break;
@@ -435,7 +454,11 @@ function build_lr(initial: number,
         throw new Error("Action type not supported");
       }
       let look_ahead = symbols[transition.look_ahead_symbol];
-      result.edges.set(look_ahead.name, edge);
+      if (edge !== "Accept" && edge.type === LRActionType.GOTO) {
+        result.goto.set(look_ahead.name, edge);
+      } else {
+        result.edges.set(look_ahead.name, edge);
+      }
     }
 
     return result;

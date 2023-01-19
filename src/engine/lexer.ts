@@ -68,23 +68,44 @@ export interface Token {
   position: number;
 }
 
+const EOF_SYMBOL: ParserSymbol = {
+  name: "(EOF)",
+  type: SymbolType.EOF
+};
+
+
+function edge_with_label(state: DFAState, char: string): DFAEdge|undefined {
+  for (const edge of state.edges) {
+    if (char_in_set(char, edge.label)) {
+      return edge;
+    }
+  }
+  return undefined;
+}
+
 function dfa_match(str: string, start_pos: number, dfa: DFAState): Token|undefined {
+  // Check if already at the end, if so return EOF
+  if (start_pos >= str.length) {
+    return {
+      position: str.length,
+      symbol: EOF_SYMBOL,
+      value: "(EOF)"
+    };
+  }
+
   let current_state = dfa;
   let last_match: Token|undefined = undefined;
 
   for (let i=start_pos; i<str.length; ++i) {
     const chr = str.charAt(i);
-    let found = false;
-    for (let edge of current_state.edges) {
-      if (char_in_set(chr, edge.label)) {
-        current_state = edge.target;
-        found = true;
-        break;
-      }
+    let edge = edge_with_label(current_state, chr);
+    // No Edge found
+    if (edge === undefined) {
+      break;
     }
-    if (!found) {
-      return last_match;
-    }
+    // switch to next state
+    current_state = edge.target;
+    // On final state, update last_match
     if (current_state.result !== undefined) {
       last_match = {
         value: str.substring(start_pos, i+1),
@@ -93,14 +114,7 @@ function dfa_match(str: string, start_pos: number, dfa: DFAState): Token|undefin
       };
     }
   }
-  return last_match === undefined
-       ? { position: str.length,
-           symbol: {
-             name: "EOF",
-             type: SymbolType.FILE_END
-           },
-           value: "EOF" }
-       : last_match;
+  return last_match;
 }
 
 // -------------------------------------
@@ -178,7 +192,7 @@ export function next_token(str: string, position: number, dfa: DFAState): Token|
       continue;
     }
 
-    if (token.symbol.type === SymbolType.FILE_END) {
+    if (token.symbol.type === SymbolType.EOF) {
       // On EOF stop reading
       break;
     }
