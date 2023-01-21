@@ -324,10 +324,14 @@ function parse_symbol(file: GTFileReader, next_index: number): ParserSymbol {
     break;
   case SymbolType.EOF:
     name = "(EOF)";
+    break;
   case SymbolType.SKIP_SYMBOLS:
     name = "[" + name + "]";
+    break;
   case SymbolType.GROUP_START:
     name = "/" + name + "/";
+    break;
+  case SymbolType.GROUP_END:
     name = "\\" + name + "\\";
   }
 

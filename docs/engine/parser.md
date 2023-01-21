@@ -257,7 +257,7 @@ function parse(text, lalr_initial_state, dfa_initial_state):
   match_pos = 0
   while not finished:
     if look_ahead is None:
-      look_ahead, match_pos = dfa_match(text, match_pos)
+      look_ahead, match_pos = dfa_match(dfa_initial_state, text, match_pos)
       if look_ahead == NoMatchFound:
         return LexerError
     parser_step = lalr_step(stack, look_ahead)

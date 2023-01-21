@@ -112,7 +112,7 @@ The main effort is in building the automatas for the respective language to begi
 ## Implementing Documentation
 In the following each of the components is documented:
 
-* [Building a DFA] (./lexer.md]
+* [Building a DFA] (./lexer.md)
 * [Building an LR(1) Automata] (./parser.md)
 * [The GOLD Grammar Table format] (./grammars.md)
 * [Comments, Groups and other Symbols] (./groups.md)

@@ -57,7 +57,7 @@ type LRStack = Array<LRStackItem>;
 
 enum LRStepResult { ACCEPT, SHIFT, REDUCE, ERROR }
 
-function LALR_step(look_ahead: Token, stack: LRStack): LRStepResult {
+function lalr_step(look_ahead: Token, stack: LRStack): LRStepResult {
   let current_state = stack[stack.length-1].current_state;
   let transition = current_state.edges.get(look_ahead.symbol.name);
 
@@ -103,7 +103,7 @@ function LALR_step(look_ahead: Token, stack: LRStack): LRStepResult {
   return LRStepResult.REDUCE;
 }
 
-function LALR_setup(initial_state: LRState): LRStack {
+function lalr_setup(initial_state: LRState): LRStack {
   return [{
     current_state: initial_state,
     parse_tree: {
@@ -136,7 +136,7 @@ export async function parse_string(str: string, dfa: DFAState, lalr: LRState,
                             ): Promise<LRParseTreeNode|LexerError|GroupError|ParserError> {
   let look_ahead: Token|undefined = undefined;
   let current_pos = 0;
-  let stack = LALR_setup(lalr);
+  let stack = lalr_setup(lalr);
 
   while (current_pos <= str.length || look_ahead !== undefined) {
     if (look_ahead === undefined) {
@@ -160,7 +160,7 @@ export async function parse_string(str: string, dfa: DFAState, lalr: LRState,
     } // else
 
     let current_state = stack[stack.length-1].current_state;
-    let step = LALR_step(look_ahead, stack);
+    let step = lalr_step(look_ahead, stack);
     switch (step) {
       case LRStepResult.ACCEPT:
         return stack.pop()!.parse_tree;
@@ -178,6 +178,9 @@ export async function parse_string(str: string, dfa: DFAState, lalr: LRState,
           break;
 
         case LRStepResult.SHIFT:
+          if (look_ahead.symbol.type === SymbolType.EOF) {
+            throw new Error("Shifting EOF should never happen");
+          }
           if (on_shift !== undefined) {
             await on_shift(current_state, look_ahead, stack, ...args);
           }
