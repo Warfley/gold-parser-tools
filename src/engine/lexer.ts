@@ -214,7 +214,7 @@ export function next_token(str: string, position: number, dfa: DFAState): Token|
     if (stack_top !== undefined &&
         stack_top.group.end_symbol.name === token.symbol.name) {
       let end_pos = token.position + token.value.length;
-      if (token.symbol.name.toLowerCase() === "newline") {
+      if (token.symbol.name.toLowerCase() === "'newline'") {
         // Special handling for groups ending on newline: don't consume newline
         end_pos = token.position;
       }

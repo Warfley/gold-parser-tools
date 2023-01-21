@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import * as fs from "fs";
+import { syncBuiltinESMExports } from "module";
 import { CharRangeSet, CharSet, DFAState, MatchGroup } from "./lexer";
 import { LRAction, LRActionType, LRState, ParserRule, ParserSymbol, SymbolType } from "./parser";
 
@@ -154,7 +155,6 @@ enum GrammarRecordType{
   // V5
     CHARRANGES = "c".charCodeAt(0),
     GROUP = "g".charCodeAt(0),
-    GROUPNESTING = "n".charCodeAt(0),
     PROPERTY = "p".charCodeAt(0),
     COUNTS_V5 = "t".charCodeAt(0),
 }
@@ -183,6 +183,7 @@ interface ParsedLRState {
 }
 
 interface ParsedReduction {
+  index: number;
   produces: number;
   consumes: Array<number>;
 }
@@ -204,16 +205,22 @@ function skip_record(file: GTFileReader) {
   }
 }
 
-function parse_charset(file: GTFileReader, charsets: Array<CharSet>) {
+function parse_charset(file: GTFileReader, next_index: number): CharSet {
   let index = file.read_int();
+  if (index !== next_index) {
+    throw new Error("Index out of order");
+  }
   let chars = file.read_string();
   let set = new Set<string>([...chars]);
-  charsets[index] = set;
+  return set;
 }
 
 
-function parse_dfa_state(file: GTFileReader, dfa_states: Array<ParsedDFAState>) {
+function parse_dfa_state(file: GTFileReader, next_index: number): ParsedDFAState {
   let index = file.read_int();
+  if (index !== next_index) {
+    throw new Error("Index out of order");
+  }
 
   let is_final = file.read_bool();
   let result_index = file.read_int();
@@ -236,12 +243,15 @@ function parse_dfa_state(file: GTFileReader, dfa_states: Array<ParsedDFAState>) 
     });
   }
 
-  dfa_states[index] = result;
+  return result;
 }
 
 
-function parse_lr_state(file: GTFileReader, lr_states: Array<ParsedLRState>) {
+function parse_lr_state(file: GTFileReader, next_index: number): ParsedLRState {
   let index = file.read_int();
+  if (index !== next_index) {
+    throw new Error("Index out of order");
+  }
   file.skip_field();
 
   let result: ParsedLRState = {
@@ -259,7 +269,7 @@ function parse_lr_state(file: GTFileReader, lr_states: Array<ParsedLRState>) {
     });
   }
 
-  lr_states[index] = result;
+  return result;
 }
 
 function parse_parameter(file: GTFileReader, params: Map<string, string>) {
@@ -272,27 +282,34 @@ function parse_parameter(file: GTFileReader, params: Map<string, string>) {
 }
 
 
-function parse_reduction(file: GTFileReader, reductions: Array<ParsedReduction>) {
-    let index = file.read_int();
+function parse_reduction(file: GTFileReader, next_index: number): ParsedReduction {
+  let index = file.read_int();
+  if (index !== next_index) {
+    throw new Error("Index out of order");
+  }
+  let symbol = file.read_int();
+  file.skip_field(); // reserved;
+
+  let result: ParsedReduction = {
+    index: index,
+    produces: symbol,
+    consumes: []
+  };
+
+  while (!file.eof() && !file.record_finished()) {
     let symbol = file.read_int();
-    file.skip_field(); // reserved;
+    result.consumes.push(symbol);
+  }
 
-    let result: ParsedReduction = {
-      produces: symbol,
-      consumes: []
-    };
-
-    while (!file.eof() && !file.record_finished()) {
-      let symbol = file.read_int();
-      result.consumes.push(symbol);
-    }
-
-    reductions[index] = result;
+  return result;
 }
 
 
-function parse_symbol(file: GTFileReader, symbols: Array<ParserSymbol>) {
+function parse_symbol(file: GTFileReader, next_index: number): ParserSymbol {
   let index = file.read_int();
+  if (index !== next_index) {
+    throw new Error("Index out of order");
+  }
   let name = file.read_string();
   let type: SymbolType = file.read_int();
 
@@ -314,15 +331,18 @@ function parse_symbol(file: GTFileReader, symbols: Array<ParserSymbol>) {
     name = "\\" + name + "\\";
   }
 
-  symbols[index] = {
+  return {
     name: name,
     type: type
   };
 }
 
 
-function parse_char_ranges(file: GTFileReader, charsets: Array<CharSet>) {
+function parse_char_ranges(file: GTFileReader, next_index: number): CharSet {
   let index = file.read_int();
+  if (index !== next_index) {
+    throw new Error("Index out of order");
+  }
   let codepage = file.read_int();
   let range_count = file.read_int();
   file.skip_field();
@@ -335,11 +355,14 @@ function parse_char_ranges(file: GTFileReader, charsets: Array<CharSet>) {
     result.add_range(start, end);
   }
 
-  charsets[index] = result;
+  return result;
 }
 
-function parse_group(file: GTFileReader, groups: Array<ParsedMatchGroup>) {
+function parse_group(file: GTFileReader, next_index: number): ParsedMatchGroup {
   let index = file.read_int();
+  if (index !== next_index) {
+    throw new Error("Index out of order");
+  }
 
   let name = file.read_string();
   let group_symbol = file.read_int();
@@ -365,7 +388,7 @@ function parse_group(file: GTFileReader, groups: Array<ParsedMatchGroup>) {
     result.nestable_groups.push(file.read_int());
   }
 
-  groups[index] = result;
+  return result;
 }
 
 function parse_property(file: GTFileReader, params: Map<string, string>) {
@@ -489,8 +512,8 @@ function build_groups(parsed_groups: ReadonlyArray<ParsedMatchGroup>, symbols: A
     let comment_start = symbols.find((symbol) => symbol.type === SymbolType.GROUP_START);
     let comment_end = symbols.find((symbol) => symbol.type === SymbolType.GROUP_END);
     let line_comment = symbols.find((symbol) => symbol.type === SymbolType.COMMENT_LINE);
-    let new_line = symbols.find((symbol) => symbol.name.toLowerCase() === "newline");
-    let comment_symbol = symbols.find((symbol) => symbol.name.toLowerCase() === "comment");
+    let new_line = symbols.find((symbol) => symbol.name.toLowerCase() === "'newline'");
+    let comment_symbol = symbols.find((symbol) => symbol.name.toLowerCase() === "[comment]");
     if (comment_symbol === undefined) {
       comment_symbol = {
         name: "Comment",
@@ -556,11 +579,11 @@ export function load_grammar_tables(file: GTFileReader): GrammarParseResult {
 
     switch (record_type) {
     case GrammarRecordType.CHARSET:
-      parse_charset(file, charsets);
+      charsets.push(parse_charset(file, charsets.length));
       break;
 
     case GrammarRecordType.DFASTATE:
-      parse_dfa_state(file, dfa_states);
+      dfa_states.push(parse_dfa_state(file, dfa_states.length));
       break;
 
     case GrammarRecordType.INITIALSTATES:
@@ -569,7 +592,7 @@ export function load_grammar_tables(file: GTFileReader): GrammarParseResult {
       break;
 
     case GrammarRecordType.LRSTATE:
-      parse_lr_state(file, lr_states);
+      lr_states.push(parse_lr_state(file, lr_states.length));
       break;
 
     case GrammarRecordType.PARAMETER:
@@ -577,44 +600,25 @@ export function load_grammar_tables(file: GTFileReader): GrammarParseResult {
       break;
 
     case GrammarRecordType.RULE:
-      parse_reduction(file, reductions);
+      reductions.push(parse_reduction(file, reductions.length));
       break;
 
     case GrammarRecordType.SYMBOL:
-      parse_symbol(file, symbols);
+      symbols.push(parse_symbol(file, symbols.length));
       break;
 
     case GrammarRecordType.COUNTS:
     case GrammarRecordType.COUNTS_V5:
-      let symbol_count = file.read_int();
-      let charset_count = file.read_int();
-      let reduction_count = file.read_int();
-      let dfa_state_count = file.read_int();
-      let lr_state_count = file.read_int();
-
-      symbols = new Array<ParserSymbol>(symbol_count);
-      charsets = new Array<CharSet>(charset_count);
-      reductions = new Array<ParsedReduction>(reduction_count);
-      dfa_states = new Array<ParsedDFAState>(dfa_state_count);
-      lr_states = new Array<ParsedLRState>(lr_state_count);
-
-      if (version === "5") {
-        let group_count = file.read_int();
-        parsed_groups = new Array<ParsedMatchGroup>(group_count);
-      }
+      // No preallocation required just skip
+      skip_record(file);
       break;
 
     case GrammarRecordType.CHARRANGES:
-      parse_char_ranges(file, charsets);
+      charsets.push(parse_char_ranges(file, charsets.length));
       break;
 
     case GrammarRecordType.GROUP:
-      parse_group(file, parsed_groups);
-      break;
-
-    case GrammarRecordType.GROUPNESTING:
-      // Skip record for now (find out later how to handle)
-      skip_record(file);
+      parsed_groups.push(parse_group(file, parsed_groups.length));
       break;
 
     case GrammarRecordType.PROPERTY:
@@ -632,7 +636,8 @@ export function load_grammar_tables(file: GTFileReader): GrammarParseResult {
   let rules = reductions.map((r) => {
     return {
       produces: symbols[r.produces],
-      consumes: r.consumes.map((c) => symbols[c])
+      consumes: r.consumes.map((c) => symbols[c]),
+      index: r.index
     };
   });
 

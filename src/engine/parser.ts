@@ -27,6 +27,7 @@ export interface ParserSymbol {
 }
 
 export interface ParserRule {
+  index: number;
   produces: ParserSymbol;
   consumes: Array<ParserSymbol>;
 }
