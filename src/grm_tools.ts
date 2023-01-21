@@ -4,8 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { platform } from "process";
 import { spawnSync } from "child_process";
-import { GTFileReader, load_grammar_tables } from "./engine/loader";
-import { LRParseTreeNode, parse_string, SymbolType } from "./engine/parser";
+import { GTFileReader, load_grammar_tables, LRParseTreeNode, parse_string} from "@warfley/node-gold-engine";
 
 export const BUILD_EXE = "GOLDbuild.exe";
 export const TEST_EXE = "GOLDtest.exe";
@@ -223,6 +222,7 @@ export async function on_parse_command(document?: TextDocument, grammar?: string
 
   let document_string = document.getText();
 
+  /* TODO: Implement some form of debugger */
   let result = await parse_string(document_string, grammar_tables.dfa, grammar_tables.lalr, undefined, (state, token, stack) => {
     let tree = stack[stack.length - 1].parse_tree;
     let s = tree.symbol.name + " ::= ";

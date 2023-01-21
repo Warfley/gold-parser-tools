@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import { commands, Position, Range, Selection, TextDocument, TextDocumentChangeEvent, TextEditor, window } from "vscode";
+import { commands, Position, Range, TextDocument, TextDocumentChangeEvent, TextEditor, window } from "vscode";
 import { DocumentParser, DefinitionType } from "./grm_parser";
 
 export function document_opend(document: TextDocument) {

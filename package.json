@@ -27,21 +27,34 @@
     "languages": [
       {
         "id": "grm",
-        "aliases": ["Gold Grammar", "grm"],
-        "extensions": [".grm"],
+        "aliases": [
+          "Gold Grammar",
+          "grm"
+        ],
+        "extensions": [
+          ".grm"
+        ],
         "configuration": "./language-configuration.json"
       },
       {
         "id": "cgt",
-        "aliases": ["Compiled Grammar Table", "cgt"],
-        "extensions": [".cgt", ".egt"]
+        "aliases": [
+          "Compiled Grammar Table",
+          "cgt"
+        ],
+        "extensions": [
+          ".cgt",
+          ".egt"
+        ]
       }
     ],
-    "grammars": [{
-      "language": "grm",
-      "scopeName": "source.grm",
-      "path": "./syntaxes/grm.tmLanguage.json"
-    }],
+    "grammars": [
+      {
+        "language": "grm",
+        "scopeName": "source.grm",
+        "path": "./syntaxes/grm.tmLanguage.json"
+      }
+    ],
     "commands": [
       {
         "command": "gold-parser-tools.compileGrammar",
@@ -52,7 +65,7 @@
         "title": "GOLD: Parse current file"
       }
     ],
-    "keybindings":[
+    "keybindings": [
       {
         "command": "gold-parser-tools.compileGrammar",
         "key": "ctrl+alt+c",
@@ -76,16 +89,19 @@
     "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {
-    "@types/vscode": "^1.74.0",
     "@types/glob": "^8.0.0",
     "@types/mocha": "^10.0.1",
     "@types/node": "16.x",
+    "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
+    "@vscode/test-electron": "^2.2.0",
     "eslint": "^8.28.0",
     "glob": "^8.0.3",
     "mocha": "^10.1.0",
-    "typescript": "^4.9.3",
-    "@vscode/test-electron": "^2.2.0"
+    "typescript": "^4.9.3"
+  },
+  "dependencies": {
+    "@warfley/node-gold-engine": "^0.0.2"
   }
 }

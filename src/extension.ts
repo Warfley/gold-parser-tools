@@ -8,10 +8,6 @@ declare global {
 	var diagnostics_collection: vscode.DiagnosticCollection;
 }
 
-async function test() {
-	vscode.window.showErrorMessage("Test");
-}
-
 export function activate(context: vscode.ExtensionContext) {
 	let completionProvider = vscode.languages.registerCompletionItemProvider(
 		"grm", new GRMAutoComplete()
@@ -39,4 +35,6 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate() {
+
+}
