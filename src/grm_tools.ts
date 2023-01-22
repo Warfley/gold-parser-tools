@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import { DiagnosticSeverity, workspace, TextDocument, window, Diagnostic, commands } from "vscode";
+import { DiagnosticSeverity, workspace, TextDocument, window, Diagnostic, commands, Uri, debug } from "vscode";
 import * as fs from 'fs';
 import * as path from 'path';
 import { platform } from "process";
 import { spawnSync } from "child_process";
-import { GTFileReader, load_grammar_tables, LRParseTreeNode, parse_string} from "@warfley/node-gold-engine";
+import { select_grammar } from "./grm_debug_config";
 
 export const BUILD_EXE = "GOLDbuild.exe";
 export const TEST_EXE = "GOLDtest.exe";
@@ -139,9 +139,12 @@ function lookup_errors(log_file: string, document: TextDocument): Promise<boolea
   });
 }
 
-export async function on_compile_command(document?: TextDocument): Promise<false|string> {
+export async function on_compile_command(grm_file?: Uri): Promise<false|string> {
+  let document = grm_file !== undefined
+               ? await workspace.openTextDocument(grm_file)
+               : undefined;
   if (document === undefined) {
-    document = window.activeTextEditor?.document;
+    document =window.activeTextEditor?.document;
   }
   if (document === undefined || document.languageId !== "grm") {
     window.showErrorMessage("Only Gold Grammar files (.grm) can be compiled with this command");
@@ -172,7 +175,10 @@ export async function on_compile_command(document?: TextDocument): Promise<false
   return compile_result;
 }
 
-export async function on_parse_command(document?: TextDocument, grammar?: string): Promise<boolean> {
+export async function on_parse_command(text_file?: Uri, grammar?: Uri): Promise<boolean> {
+  let document = text_file !== undefined
+               ? await workspace.openTextDocument(text_file)
+               : undefined;
   if (document === undefined) {
     document = window.activeTextEditor?.document;
   }
@@ -182,55 +188,19 @@ export async function on_parse_command(document?: TextDocument, grammar?: string
   }
 
   if (grammar === undefined) {
-    let grammars = await workspace.findFiles("**/*.grm");
-    grammars = grammars.concat(await workspace.findFiles("**/*egt"));
-    grammars = grammars.concat(await workspace.findFiles("**/*.cgt"));
-    let selection = await window.showQuickPick(grammars.map((grammar_path) => {
-      return {
-        label: path.basename(grammar_path.path),
-        description: workspace.asRelativePath(grammar_path.path),
-        uri: grammar_path
-      };
-    }), {canPickMany: false});
-    if (selection !== undefined) {
-      grammar = selection.uri.fsPath;
-    }
+    grammar = await select_grammar();
   }
+
   if (grammar === undefined) {
     return false;
   }
-  if (grammar.endsWith(".grm")) {
-    let doc = await workspace.openTextDocument(grammar);
-    let compiled = await on_compile_command(doc);
-    if (compiled === false) {
-      return false;
-    }
-    grammar = compiled;
-  }
-  if (!grammar.endsWith(".cgt") && !grammar.endsWith(".egt")) {
-    window.showErrorMessage("Requires Gold Grammar Tables (.cgt|.egt) for parsing");
-    return false;
-  }
 
-  if (!fs.existsSync(grammar)) {
-    window.showErrorMessage("GOLD Parser Tools extension currently only works for local workspaces, this seems to be a remote workspace");
-    return false;
-  }
-
-  let grammar_reader = await GTFileReader.from_file(grammar);
-  let grammar_tables = load_grammar_tables(grammar_reader);
-
-  let document_string = document.getText();
-
-  /* TODO: Implement some form of debugger */
-  let result = await parse_string(document_string, grammar_tables.dfa, grammar_tables.lalr, undefined, (state, token, stack) => {
-    let tree = stack[stack.length - 1].parse_tree;
-    let s = tree.symbol.name + " ::= ";
-    for (let c of tree.children as Array<LRParseTreeNode>) {
-      s += c.symbol.name + " ";
-    }
-    console.log(s);
-    return new Promise<void>((resolve) => resolve());
+  debug.startDebugging(undefined, {
+    name: "Parse File with Grammar",
+    type: "grm",
+    request: "launch",
+    program: document.fileName,
+    grammar: grammar.fsPath
   });
 
   return true;
