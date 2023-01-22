@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import { DebugSession } from "@vscode/debugadapter";
 import { DebugProtocol } from "@vscode/debugprotocol";
-import { commands, TextDocument, window, workspace } from "vscode";
+import { commands, Position, TextDocument, window, workspace } from "vscode";
 import { on_compile_command } from "./grm_tools";
-import { GrammarParseResult, GTFileReader, load_grammar_tables, LRState, parse_string, Token, LRStackItem, GroupError, LRParseTreeNode, LexerError, ParserError, is_group_error, is_parser_error, is_lexer_error, parse_successful } from '@warfley/node-gold-engine';
+import { GrammarParseResult, GTFileReader, load_grammar_tables, LRState, parse_string, Token, LRStackItem, GroupError, LRParseTreeNode, LexerError, ParserError, is_group_error, is_parser_error, is_lexer_error, parse_successful, LRActionType, ParserSymbol, SymbolType } from '@warfley/node-gold-engine';
 import * as fs from "fs";
 import * as path from "path";
-import { ExitedEvent, InitializedEvent, OutputEvent, TerminatedEvent } from "@vscode/debugadapter/lib/debugSession";
-import { DocumentParser } from "./grm_parser";
+import { ExitedEvent, InitializedEvent, InvalidatedEvent, OutputEvent, Scope, Source, StackFrame, StoppedEvent, TerminatedEvent, Thread } from "@vscode/debugadapter/lib/debugSession";
+import { DocumentParser, DefinitionType, parse_rules, token_name, GRMRule, GRMToken, TokenType } from "./grm_parser";
 import { once, EventEmitter } from "node:events";
 import { select_grammar } from "./grm_debug_config";
 
@@ -18,17 +18,54 @@ interface LaunchArgs extends DebugProtocol.LaunchRequestArguments {
   grammar?: string;
 }
 
+interface GRMBreakPoint {
+  line: number;
+  rule?: GRMRule;
+  defines: GRMToken;
+}
+
+function symbol_name(symbol: ParserSymbol): string {
+  let result = symbol.name.toLowerCase();
+  result = result.substring(1, result.length - 1);
+  return result.trim();
+}
+
+function is_break_point(result: object): result is GRMBreakPoint {
+  return "defines" in result && "line" in result;
+}
+
+interface LastParserState {
+  stack: ReadonlyArray<LRStackItem>;
+  look_ahead: Token;
+  action: LRActionType.REDUCE|LRActionType.SHIFT;
+}
+
+type PausedReason = GRMBreakPoint|LexerError|ParserError|GroupError;
+
 export class GRMDebugSession extends DebugSession {
   private grammar?: TextDocument = undefined;
+  private grammar_file?: string = undefined;
   private parser?: DocumentParser = undefined;
   private document?: TextDocument = undefined;
   private document_text?: string = undefined;
   private grammar_tables?: GrammarParseResult = undefined;
 
+  private pause_reason?: PausedReason = undefined;
   private parse_result?: LRParseTreeNode|LexerError|GroupError|ParserError = undefined;
+  private parser_state?: LastParserState;
+  private lexed_tokens: Array<Token> = [];
+  private break_points: Array<GRMBreakPoint> = [];
 
   private events: EventEmitter = new EventEmitter();
 
+  private terminated: boolean = false;
+
+  private async pause_parse(reason: PausedReason): Promise<boolean> {
+    this.pause_reason = reason;
+    this.sendEvent(new StoppedEvent('breakpoint', 1));
+    await once(this.events, "continue");
+    return !this.terminated;
+  }
 
   private async prepare_grammar(grammar: string): Promise<GrammarParseResult|undefined> {
     if (grammar.endsWith(".grm")) {
@@ -61,6 +98,7 @@ export class GRMDebugSession extends DebugSession {
   protected async initializeRequest(response: DebugProtocol.InitializeResponse,
                                     args: DebugProtocol.InitializeRequestArguments
                                    ): Promise<void> {
+
     response.body = response.body || {};
     /** The debug adapter supports the `configurationDone` request. */
     response.body.supportsConfigurationDoneRequest = true;
@@ -148,6 +186,7 @@ export class GRMDebugSession extends DebugSession {
 
     if (grammar_document !== undefined) {
       this.grammar = grammar_document;
+      this.grammar_file = this.grammar.fileName;
       this.parser = DocumentParser.get_or_create(this.grammar);
       this.parser.parse();
     }
@@ -169,9 +208,9 @@ export class GRMDebugSession extends DebugSession {
     // Start the parsing
     let _this = this;
     parse_string(this.document_text, grammar_tables.dfa, grammar_tables.lalr,
-                 (...args) => _this.on_lex(...args),
-                 (...args) => _this.on_reduce(...args),
-                 (...args) => _this.on_shift(...args)
+                (...args) => _this.on_lex(...args),
+                (...args) => _this.on_reduce(...args),
+                (...args) => _this.on_shift(...args)
                 ).then((result) => {
       this.parse_result = result;
       this.on_finished(result);
@@ -185,6 +224,10 @@ export class GRMDebugSession extends DebugSession {
   }
 
   private async on_finished(result: LRParseTreeNode|LexerError|GroupError|ParserError): Promise<void> {
+    if (this.terminated) {
+      this.sendEvent(new TerminatedEvent());
+      return;
+    }
     if (is_group_error(result)) {
       let top_group = result.groups[result.groups.length - 1];
       let pos = this.document!.positionAt(top_group.start_position);
@@ -210,6 +253,25 @@ export class GRMDebugSession extends DebugSession {
   }
 
   private async on_lex(token: Token, ...args: any[]): Promise<void> {
+    if (this.terminated) {
+      return;
+    }
+    this.lexed_tokens.push(token);
+
+    if (this.parser !== undefined) {
+      let tok_name = symbol_name(token.symbol);
+
+      for (const bp of this.break_points) {
+        if (bp.defines.type === TokenType.TERMINAL &&
+            token_name(bp.defines) === tok_name) {
+          if (await this.pause_parse(bp)) {
+            break;
+          }
+          return;
+        }
+      }
+    }
+
     let pos = this.document!.positionAt(token.position);
     this.sendEvent(new OutputEvent("Lexed token: " + token.symbol.name + ": " + token.value, " at: " + pos.line + ": " + pos.character + "\n"));
   }
@@ -218,6 +280,14 @@ export class GRMDebugSession extends DebugSession {
                           look_ahead: Token,
                           stack: ReadonlyArray<LRStackItem>,
                           ...args: any[]): Promise<void> {
+    if (this.terminated) {
+      return;
+    }
+    this.parser_state = {
+      action: LRActionType.REDUCE,
+      look_ahead: look_ahead,
+      stack: stack
+    };
     let reduction = stack[stack.length - 1].parse_tree;
     let rule = "";
     if (reduction.children instanceof Array) {
@@ -235,6 +305,14 @@ export class GRMDebugSession extends DebugSession {
                          look_ahead: Token,
                          stack: ReadonlyArray<LRStackItem>,
                          ...args: any[]): Promise<void> {
+    if (this.terminated) {
+      return;
+    }
+    this.parser_state = {
+      action: LRActionType.SHIFT,
+      look_ahead: look_ahead,
+      stack: stack
+    };
     this.sendEvent(new OutputEvent("Shifted: " + look_ahead.symbol.name + "\n"));
   }
 
@@ -242,28 +320,93 @@ export class GRMDebugSession extends DebugSession {
                                    args: DebugProtocol.TerminateArguments,
                                    request?: DebugProtocol.Request
                                   ): Promise<void> {
-
+    this.terminated = true;
+    this.events.emit("continue");
+    this.sendResponse(response);
   }
 
   protected async setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse,
                                         args: DebugProtocol.SetBreakpointsArguments,
                                         request?: DebugProtocol.Request
                                        ): Promise<void> {
+    if (this.parser === undefined) {
+      this.sendResponse(response);
+      return;
+    }
+		const source_file = args.source.path as string;
+    if (this.grammar_file! !== source_file) {
+      this.sendResponse(response);
+      return;
+    }
+		const requested_breakpoints: Array<number> = args.lines || [];
 
+    let breaks: Array<GRMBreakPoint> = [];
+    let next_id = 0;
+
+    for (let line of requested_breakpoints) {
+      // 0 based lines
+      line -= 1;
+      let definition = this.parser.definition_at(new Position(line, 0));
+      if (definition === undefined) {
+        continue;
+      }
+      if (definition.type === DefinitionType.TERMINAL) {
+        breaks.push({
+          defines: definition.symbols[0],
+          line: definition.range.start.line,
+        });
+      }
+      if (definition.type === DefinitionType.NON_TERMINAL) {
+        let rules = parse_rules(definition);
+        for (let rule of rules) {
+          if (rule.line === line) {
+            breaks.push({
+              defines: definition.symbols[0],
+              line: line,
+              rule: rule
+            });
+          }
+        }
+      }
+    }
+
+    this.break_points = breaks;
+    response.body = {
+      breakpoints: breaks.map((b) => {
+        return {
+          line: b.line + 1,
+          verified: true
+        };
+      })
+    };
+
+    this.sendResponse(response);
   }
+
+  protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
+
+		// runtime supports no threads so just return a default thread.
+		response.body = {
+			threads: [
+				new Thread(1, "Parsing Thread"),
+			]
+		};
+		this.sendResponse(response);
+	}
 
   protected async continueRequest(response: DebugProtocol.ContinueResponse,
                                   args: DebugProtocol.ContinueArguments,
                                   request?: DebugProtocol.Request
                                  ): Promise<void> {
-
+    this.events.emit("continue");
+    this.sendResponse(response);
   }
 
   protected async nextRequest(response: DebugProtocol.NextResponse,
                               args: DebugProtocol.NextArguments,
                               request?: DebugProtocol.Request
                              ): Promise<void> {
-
+    this.sendResponse(response);
   }
 
   protected async stepInRequest(response: DebugProtocol.StepInResponse,
@@ -271,6 +414,7 @@ export class GRMDebugSession extends DebugSession {
                                 request?: DebugProtocol.Request
                                ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async stepOutRequest(response: DebugProtocol.StepOutResponse,
@@ -278,6 +422,7 @@ export class GRMDebugSession extends DebugSession {
                                  request?: DebugProtocol.Request
                                 ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async pauseRequest(response: DebugProtocol.PauseResponse,
@@ -285,13 +430,49 @@ export class GRMDebugSession extends DebugSession {
                                request?: DebugProtocol.Request
                               ): Promise<void> {
 
+    this.sendResponse(response);
+  }
+
+  private lexer_stack_frames(): Array<DebugProtocol.StackFrame> {
+    let result: Array<DebugProtocol.StackFrame> = [];
+    for (let i=this.lexed_tokens.length-1; i>=0; --i) {
+      let token = this.lexed_tokens[i];
+      let doc_pos = this.document!.positionAt(token.position).translate(1, 1);
+      result.push(new StackFrame(i, token.symbol.name,
+                                 new Source(path.basename(this.document!.fileName), this.document!.fileName),
+                                 doc_pos.line,
+                                 doc_pos.character));
+      if (this.parser === undefined) {
+        continue;
+      }
+    }
+    return result;
+  }
+
+  private parser_stack_frames(): Array<DebugProtocol.StackFrame> {
+    return [];
   }
 
   protected async stackTraceRequest(response: DebugProtocol.StackTraceResponse,
                                     args: DebugProtocol.StackTraceArguments,
                                     request?: DebugProtocol.Request
                                    ): Promise<void> {
-
+    if (this.pause_reason === undefined) {
+      this.sendResponse(response);
+      return;
+    }
+    if (is_break_point(this.pause_reason)) {
+      if (this.pause_reason.defines.type === TokenType.TERMINAL) {
+        response.body = {
+          stackFrames: this.lexer_stack_frames()
+        };
+      } else {
+        response.body = {
+          stackFrames: this.parser_stack_frames()
+        };
+      }
+    }
+    this.sendResponse(response);
   }
 
   protected async scopesRequest(response: DebugProtocol.ScopesResponse,
@@ -299,13 +480,70 @@ export class GRMDebugSession extends DebugSession {
                                 request?: DebugProtocol.Request
                                ): Promise<void> {
 
+    if (this.pause_reason === undefined) {
+      this.sendResponse(response);
+      return;
+    }
+    if (is_break_point(this.pause_reason)) {
+      if (this.pause_reason.defines.type === TokenType.TERMINAL) {
+        response.body = {
+          scopes: [
+            new Scope("Token", request!.arguments!.frameId + 1)
+          ]
+        };
+      } else {
+        let last_action = this.parser_state!.action;
+        response.body = {
+          scopes: [
+            new Scope(last_action === LRActionType.SHIFT ? "Shift" : "Reduce", request!.arguments!.frameId + 1)
+          ]
+        };
+      }
+    }
+    this.sendResponse(response);
   }
 
   protected async variablesRequest(response: DebugProtocol.VariablesResponse,
                                    args: DebugProtocol.VariablesArguments,
                                    request?: DebugProtocol.Request
                                   ): Promise<void> {
+    if (this.pause_reason === undefined) {
+      this.sendResponse(response);
+      return;
+    }
 
+    let frame_id = request!.arguments!.variablesReference - 1;
+    if (is_break_point(this.pause_reason)) {
+      if (this.pause_reason.defines.type === TokenType.TERMINAL) {
+        let token = this.lexed_tokens[frame_id];
+        response.body = {
+          variables: [
+            {
+              name: "Token",
+              value: "'" + token.value + "'",
+              variablesReference: 0
+            },
+            {
+              name: "Symbol",
+              value: token.symbol.name,
+              variablesReference: 0
+            },
+            {
+              name: "Type",
+              value: SymbolType[token.symbol.type],
+              variablesReference: 0
+            }
+          ]
+        };
+      } else {
+        let last_action = this.parser_state!.action;
+        response.body = {
+          variables: []
+        };
+      }
+    }
+
+    this.sendResponse(response);
   }
 
   protected async evaluateRequest(response: DebugProtocol.EvaluateResponse,
@@ -313,6 +551,7 @@ export class GRMDebugSession extends DebugSession {
                                   request?: DebugProtocol.Request
                                  ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async exceptionInfoRequest(response: DebugProtocol.ExceptionInfoResponse,
@@ -320,6 +559,7 @@ export class GRMDebugSession extends DebugSession {
                                        request?: DebugProtocol.Request
                                       ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async dataBreakpointInfoRequest(response: DebugProtocol.DataBreakpointInfoResponse,
@@ -327,6 +567,7 @@ export class GRMDebugSession extends DebugSession {
                                             request?: DebugProtocol.Request
                                            ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async setDataBreakpointsRequest(response: DebugProtocol.SetDataBreakpointsResponse,
@@ -334,6 +575,7 @@ export class GRMDebugSession extends DebugSession {
                                             request?: DebugProtocol.Request
                                            ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async readMemoryRequest(response: DebugProtocol.ReadMemoryResponse,
@@ -341,6 +583,7 @@ export class GRMDebugSession extends DebugSession {
                                     request?: DebugProtocol.Request
                                    ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async cancelRequest(response: DebugProtocol.CancelResponse,
@@ -348,6 +591,7 @@ export class GRMDebugSession extends DebugSession {
                                 request?: DebugProtocol.Request
                                ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async breakpointLocationsRequest(response: DebugProtocol.BreakpointLocationsResponse,
@@ -355,6 +599,7 @@ export class GRMDebugSession extends DebugSession {
                                              request?: DebugProtocol.Request
                                             ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
   protected async setInstructionBreakpointsRequest(response: DebugProtocol.SetInstructionBreakpointsResponse,
@@ -362,6 +607,7 @@ export class GRMDebugSession extends DebugSession {
                                                    request?: DebugProtocol.Request
                                                   ): Promise<void> {
 
+    this.sendResponse(response);
   }
 
 }

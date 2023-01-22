@@ -30,6 +30,39 @@ export interface GRMDefinition {
   type: DefinitionType;
 }
 
+export interface GRMRule {
+  produces: GRMToken;
+  consumes: Array<GRMToken>;
+  line: number;
+}
+
+export function parse_rules(definition: GRMDefinition): Array<GRMRule> {
+  if (definition.type !== DefinitionType.NON_TERMINAL) {
+    return [];
+  }
+  let result: Array<GRMRule> = [];
+  let current_rule: GRMRule = {
+    produces: definition.symbols[0],
+    consumes: [],
+    line: definition.range.start.line
+  };
+  for (let i=2; i<definition.symbols.length; ++i) {
+    let symbol = definition.symbols[i];
+    if (symbol.type === TokenType.OPERATOR) {
+      result.push(current_rule);
+      current_rule = {
+        produces: definition.symbols[0],
+        consumes: [],
+        line: symbol.location.line
+      };
+    } else {
+      current_rule.consumes.push(symbol);
+    }
+  }
+  result.push(current_rule);
+  return result;
+}
+
 function default_set(name: string, hint?: string): GRMToken {
   return {
     value: name,
@@ -270,7 +303,7 @@ export class DocumentParser {
   // parsing results
   private errors: Array<GRMError> = [];
   private definitions: Array<GRMDefinition> = [];
-  private symbols: GRMGrammarSymbols = {
+  public symbols: GRMGrammarSymbols = {
       defined_symbols: new Map<DefinitionType, Map<string, GRMToken>>([
         [DefinitionType.PARAMETER, new Map<string, GRMToken>()],
         [DefinitionType.SET, new Map<string, GRMToken>()],

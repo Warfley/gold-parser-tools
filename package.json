@@ -78,6 +78,11 @@
         "mac": "cmd+alt+p"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "grm"
+      }
+    ],
     "debuggers": [
       {
         "type": "grm",
