@@ -12,7 +12,7 @@ export interface GRMToken {
 }
 
 interface GRMGrammarSymbols {
-  defined_symbols: Map<DefinitionType, Map<string, GRMToken>>;
+  defined_symbols: Map<DefinitionType, Map<string, GRMDefinition>>;
   used_symbols: Map<TokenType, Array<GRMToken>>;
 }
 
@@ -31,29 +31,33 @@ export interface GRMDefinition {
 }
 
 export interface GRMRule {
+  name: string;
   produces: GRMToken;
   consumes: Array<GRMToken>;
-  line: number;
+  position: Position;
 }
 
 export function parse_rules(definition: GRMDefinition): Array<GRMRule> {
   if (definition.type !== DefinitionType.NON_TERMINAL) {
     return [];
   }
+  let index = 0;
   let result: Array<GRMRule> = [];
   let current_rule: GRMRule = {
+    name: token_name(definition.symbols[0]) + ":" + ++index,
     produces: definition.symbols[0],
     consumes: [],
-    line: definition.range.start.line
+    position: definition.range.start
   };
   for (let i=2; i<definition.symbols.length; ++i) {
     let symbol = definition.symbols[i];
     if (symbol.type === TokenType.OPERATOR) {
       result.push(current_rule);
       current_rule = {
+        name: token_name(definition.symbols[0]) + ":" + ++index,
         produces: definition.symbols[0],
         consumes: [],
-        line: symbol.location.line
+        position: symbol.location
       };
     } else {
       current_rule.consumes.push(symbol);
@@ -63,12 +67,17 @@ export function parse_rules(definition: GRMDefinition): Array<GRMRule> {
   return result;
 }
 
-function default_set(name: string, hint?: string): GRMToken {
-  return {
+function default_set(name: string, hint?: string): GRMDefinition {
+  let token = {
     value: name,
     type: TokenType.SET,
     location: new Position(0, 0),
     hint: hint
+  };
+  return {
+    range: new Range(token.location, token.location.translate(0, token.value.length)),
+    symbols: [token, token, token],
+    type: DefinitionType.SET
   };
 }
 
@@ -83,7 +92,7 @@ for (let tr of trs) {
 }
 */
 
-const DEFAULT_SETS: Array<GRMToken> = [
+const DEFAULT_SETS: Array<GRMDefinition> = [
 default_set("{HT}", "Horizontal Tab character."),
 default_set("{LF}", "Line Feed character."),
 default_set("{VT}", "Vertical Tab character. This character is rarely used."),
@@ -303,12 +312,13 @@ export class DocumentParser {
   // parsing results
   private errors: Array<GRMError> = [];
   private definitions: Array<GRMDefinition> = [];
+  // Publicly accessible information/parsing results
   public symbols: GRMGrammarSymbols = {
-      defined_symbols: new Map<DefinitionType, Map<string, GRMToken>>([
-        [DefinitionType.PARAMETER, new Map<string, GRMToken>()],
-        [DefinitionType.SET, new Map<string, GRMToken>()],
-        [DefinitionType.TERMINAL, new Map<string, GRMToken>()],
-        [DefinitionType.NON_TERMINAL, new Map<string, GRMToken>()],
+      defined_symbols: new Map<DefinitionType, Map<string, GRMDefinition>>([
+        [DefinitionType.PARAMETER, new Map<string, GRMDefinition>()],
+        [DefinitionType.SET, new Map<string, GRMDefinition>()],
+        [DefinitionType.TERMINAL, new Map<string, GRMDefinition>()],
+        [DefinitionType.NON_TERMINAL, new Map<string, GRMDefinition>()],
       ]),
       used_symbols: new Map<TokenType, Array<GRMToken>>([
         [TokenType.SET, new Array<GRMToken>()],
@@ -316,6 +326,7 @@ export class DocumentParser {
         [TokenType.NON_TERMINAL, new Array<GRMToken>()],
       ])
   };
+  public rules = new Array<GRMRule>;
 
   private static instances = new Map<string, DocumentParser>();
   public static get_or_create(document: TextDocument): DocumentParser {
@@ -482,11 +493,11 @@ export class DocumentParser {
     this.current_index = start_index;
 
     this.symbols = {
-      defined_symbols: new Map<DefinitionType, Map<string, GRMToken>>([
-        [DefinitionType.PARAMETER, new Map<string, GRMToken>()],
-        [DefinitionType.SET, new Map<string, GRMToken>()],
-        [DefinitionType.TERMINAL, new Map<string, GRMToken>()],
-        [DefinitionType.NON_TERMINAL, new Map<string, GRMToken>()],
+      defined_symbols: new Map<DefinitionType, Map<string, GRMDefinition>>([
+        [DefinitionType.PARAMETER, new Map<string, GRMDefinition>()],
+        [DefinitionType.SET, new Map<string, GRMDefinition>()],
+        [DefinitionType.TERMINAL, new Map<string, GRMDefinition>()],
+        [DefinitionType.NON_TERMINAL, new Map<string, GRMDefinition>()],
       ]),
       used_symbols: new Map<TokenType, Array<GRMToken>>([
         [TokenType.SET, new Array<GRMToken>()],
@@ -495,8 +506,10 @@ export class DocumentParser {
       ])
     };
     for (let set of DEFAULT_SETS) {
-      this.symbols.defined_symbols.get(DefinitionType.SET)!.set(token_name(set), set);
+      this.symbols.defined_symbols.get(DefinitionType.SET)!.set(token_name(set.symbols[0]), set);
     }
+
+    this.rules = [];
   }
 
   private incomplete_definition_error(definition: GRMDefinition, expected: string) {
@@ -638,13 +651,15 @@ export class DocumentParser {
     }
   }
 
-  private validate_non_terminal_definition(definition: GRMDefinition) {
+  private validate_non_terminal_definition(definition: GRMDefinition): boolean {
     if (definition.symbols.length < 3) {
       this.incomplete_definition_error(definition, "::= BCNF");
-      return;
+      return false;
     }
+    let result = true;
     if (definition.symbols[1].value !== "::=") {
       this.token_error(definition.symbols[1], "Expected OPERATOR ::=, but found %T %%");
+      result = false;
     }
     for (let i=2; i<definition.symbols.length; ++i) {
       let symbol = definition.symbols[i];
@@ -653,8 +668,10 @@ export class DocumentParser {
           symbol.type !== TokenType.NON_TERMINAL &&
           symbol.value !== "|") {
         this.token_error(symbol, "Invalid %T %% in BCNF rule");
+      result = false;
       }
     }
+    return result;
   }
 
   private check_range_set(token: GRMToken): boolean {
@@ -697,13 +714,14 @@ export class DocumentParser {
         });
         continue; // Skip unparsables (maybe better handling in future)
       }
+      // Add definitions to map
       let defined_symbol = definition.symbols[0];
       let definition_map = this.symbols.defined_symbols.get(definition.type)!;
       if (defined_symbol.value !== "Comment") {
         if (definition_map.has(token_name(defined_symbol))) {
           this.token_error(defined_symbol, "Redefinition of %T '%N'");
         } else {
-          definition_map.set(token_name(defined_symbol), defined_symbol);
+          definition_map.set(token_name(defined_symbol), definition);
         }
       }
 
@@ -721,7 +739,9 @@ export class DocumentParser {
           break;
 
         case DefinitionType.NON_TERMINAL:
-          this.validate_non_terminal_definition(definition);
+          if (this.validate_non_terminal_definition(definition)) {
+            this.rules = this.rules.concat(parse_rules(definition));
+          }
           break;
       }
 
@@ -827,7 +847,8 @@ export class DocumentParser {
       return result;
     }
 
-    for (let token of defined.values()) {
+    for (let definition of defined.values()) {
+      let token = definition.symbols[0];
       let key = token_name(token);
       if (!unique || !added.has(key)) {
         result.push(token);

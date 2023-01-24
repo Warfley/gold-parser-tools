@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import * as path from 'path';
 import {DebugAdapterDescriptor, DebugAdapterDescriptorFactory, DebugAdapterInlineImplementation, DebugConfiguration, DebugConfigurationProvider, DebugSession, ProviderResult, Uri, window, workspace, WorkspaceFolder} from 'vscode';
-import { GRMDebugSession } from './grm_debugger';
+import { GRMDebugSession } from './grm_debug_adapter';
 
 export async function select_grammar(): Promise<Uri|undefined> {
   let grammars = await workspace.findFiles("**/*.grm");
@@ -27,7 +27,11 @@ export const GRMDbgConfigProvider: DebugConfigurationProvider = {
       name: "Parse with Grammar",
       request: "launch",
       type: "grm",
-      program: "${file}"
+      program: "${file}",
+      start_paused: false,
+      output_reductions: true,
+      output_shifts: false,
+      output_tokens: false
     };
     return [result];
   },
@@ -41,6 +45,10 @@ export const GRMDbgConfigProvider: DebugConfigurationProvider = {
       debugConfiguration.name = 'Parse File';
       debugConfiguration.request = 'launch';
       debugConfiguration.program = '${file}';
+      debugConfiguration.start_paused = false;
+      debugConfiguration.output_reductions = true;
+      debugConfiguration.output_shifts = false;
+      debugConfiguration.output_tokens = false;
     }
     // if grammar is not set
     if (debugConfiguration.grammar === undefined) {

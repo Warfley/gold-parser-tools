@@ -104,6 +104,26 @@
               "grammar": {
                 "type": "string",
                 "description": "Path to the grm, egt or cgt grammar to be used"
+              },
+              "start_paused": {
+                "type": "boolean",
+                "description": "Start paused to go stepwise through the document",
+                "default": false
+              },
+              "output_reductions": {
+                "type": "boolean",
+                "description": "Output reductions performad during parsing",
+                "default": true
+              },
+              "output_shifts": {
+                "type": "boolean",
+                "description": "Output shifts performed during parsing",
+                "default": false
+              },
+              "output_tokens": {
+                "type": "boolean",
+                "description": "Tokens recognized by the lexer",
+                "default": false
               }
             }
           }
@@ -113,7 +133,11 @@
             "type": "grm",
             "request": "launch",
             "name": "Parse file with grammar",
-            "program": "${file}"
+            "program": "${file}",
+            "start_paused": false,
+            "output_reductions": true,
+            "output_shifts": false,
+            "output_tokens": false
           }
         ],
         "configurationSnippets": [
@@ -124,7 +148,11 @@
               "type": "grm",
               "request": "launch",
               "name": "Parse file with grammar",
-              "program": "^\"\\${file}\""
+              "program": "^\"\\${file}\"",
+              "start_paused": false,
+              "output_reductions": true,
+              "output_shifts": false,
+              "output_tokens": false
             }
           }
         ]
@@ -155,6 +183,6 @@
   "dependencies": {
     "@vscode/debugadapter": "^1.58.0",
     "@vscode/debugprotocol": "^1.58.0",
-    "@warfley/node-gold-engine": "file:../goldengine/node"
+    "@warfley/node-gold-engine": "^0.0.3"
   }
 }
