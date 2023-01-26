@@ -295,12 +295,12 @@ const set_range_expr = new RegExp("\\s*(#\\d+|&[0-9a-fA-F]{1,4})(\\s*\\.\\.\\s*(
 const token_expr = new RegExp("([A-Za-z0-9_.][A-Za-z0-9_.-]*)|<([A-Za-z0-9\\s_.-]+)>|{(.+?)}|\"(.+?)\"|'(.*?)'|(=|::=|\\||\\?|\\+|\\-|\\*|\\(|\\)|@)|(\\[([^\\[\\]']|'[^']*')+\\])");
 
 const required_parameter = [
-    "name",
-    "version",
-    "author",
-    "about",
-    "case sensitive",
-    "start symbol",
+    "Name",
+    "Version",
+    "Author",
+    "About",
+    "Case Sensitive",
+    "Start Symbol",
 ];
 
 export class DocumentParser {
@@ -861,7 +861,7 @@ export class DocumentParser {
 
   private missing_parameter(): Array<GRMToken> {
     let parameters = this.symbols.defined_symbols.get(DefinitionType.PARAMETER);
-    let missing = required_parameter.filter((param) => !parameters!.has(param));
+    let missing = required_parameter.filter((param) => !parameters!.has(param.toLowerCase()));
     let result = [];
 
     for (let param of missing) {

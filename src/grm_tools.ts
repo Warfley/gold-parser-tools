@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import { DiagnosticSeverity, workspace, TextDocument, window, Diagnostic, commands, Uri, debug } from "vscode";
+import { DiagnosticSeverity, workspace, TextDocument, window, Diagnostic, commands, Uri, debug, QuickPickItem } from "vscode";
 import * as fs from 'fs';
 import * as path from 'path';
 import { platform } from "process";
 import { spawnSync } from "child_process";
-import { select_grammar } from "./grm_debug_config";
+import { prepare_grammar, select_grammar } from "./grm_debug_config";
+import { Serializers, serialize_cgt } from "./serializers/serializer";
+import { CGTData } from "@warfley/node-gold-engine";
 
 export const BUILD_EXE = "GOLDbuild.exe";
 export const TEST_EXE = "GOLDtest.exe";
@@ -203,5 +205,85 @@ export async function on_parse_command(text_file?: Uri, grammar?: Uri): Promise<
     grammar: grammar.fsPath
   });
 
+  return true;
+}
+
+function grammar_name(file_name: string, cgt: CGTData): string {
+  let name = cgt.params.get("Name") || cgt.params.get("name");
+  if (name === undefined) {
+    name = path.basename(file_name).toLowerCase();
+    name = name.substring(0, name.length - 4);
+  }
+  return name.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+export async function on_generate_from_grammar(grammar?: Uri): Promise<boolean> {
+  if (grammar === undefined) {
+    grammar = await select_grammar();
+  }
+  if (grammar === undefined) {
+    return false;
+  }
+
+  let current_editor = window.activeTextEditor;
+  if (current_editor === undefined) {
+    return false;
+  }
+
+  let cgt_data = await prepare_grammar(grammar.fsPath);
+  if (cgt_data === undefined) {
+    window.showErrorMessage("Grammar Compilation Error");
+    return false;
+  }
+
+  let selected_serializer = Serializers.get(current_editor.document.languageId);
+  if (selected_serializer === undefined) {
+    let selection = await window.showQuickPick([...Serializers.keys()].map((s) => {
+      return {
+        label: s
+      };
+    }), {canPickMany: false});
+    if (selection !== undefined) {
+      selected_serializer = Serializers.get(selection.label);
+    }
+  }
+
+  if (selected_serializer === undefined) {
+    return false;
+  }
+
+  let where: "declaration"|"definition"|"imports"|undefined = undefined;
+  let selectable: Array<QuickPickItem> = [{
+    label: "declaration",
+    detail: "Generate the Declaration (Header) of the CGT Data"
+  }];
+  if (!selected_serializer.only_declaration) {
+    selectable.push({
+      label: "definition",
+      detail: "Generate the Definition (implementation) of the CGT Data"
+    });
+  }
+  if (selected_serializer.imports !== undefined) {
+    selectable.unshift({
+      label: "imports",
+      detail: "Generate the Imports for a CGT Grammar"
+    });
+  }
+  let selection = await window.showQuickPick(selectable, {canPickMany: false});
+  if (selection?.label === "declaration" ||
+      selection?.label === "definition" ||
+      selection?.label === "imports") {
+    where = selection.label;
+  }
+
+  if (where === undefined) {
+    return false;
+  }
+
+  let serialized = where === "imports"
+                 ? selected_serializer.imports!
+                 : serialize_cgt(cgt_data, selected_serializer, grammar_name(grammar.fsPath, cgt_data), where);
+
+  current_editor.edit((builder) => builder.insert(current_editor!.selection.start, serialized));
   return true;
 }

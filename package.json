@@ -63,6 +63,10 @@
       {
         "command": "gold-parser-tools.parseWithGrammar",
         "title": "GOLD: Parse current file"
+      },
+      {
+        "command": "gold-parser-tools.generateFromGrammar",
+        "title": "GOLD: Generate Parser from Grammar"
       }
     ],
     "keybindings": [
@@ -76,6 +80,11 @@
         "command": "gold-parser-tools.parseWithGrammar",
         "key": "ctrl+alt+p",
         "mac": "cmd+alt+p"
+      },
+      {
+        "command": "gold-parser-tools.generateFromGrammar",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g"
       }
     ],
     "breakpoints": [
@@ -183,6 +192,6 @@
   "dependencies": {
     "@vscode/debugadapter": "^1.58.0",
     "@vscode/debugprotocol": "^1.58.0",
-    "@warfley/node-gold-engine": "^0.0.3"
+    "@warfley/node-gold-engine": "^0.0.4"
   }
 }

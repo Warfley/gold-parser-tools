@@ -1,12 +1,13 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import { Position, TextDocument, window, workspace } from "vscode";
 import { on_compile_command } from "./grm_tools";
-import { GrammarParseResult, GTFileReader, load_grammar_tables, LRState, parse_string, Token, LRStackItem, GroupError, LexerError, ParserError, is_group_error, is_parser_error, is_lexer_error, LRActionType, ParserSymbol, ParsingResult, LRParseTreeNode, SymbolType, ParserRule } from '@warfley/node-gold-engine';
+import { GrammarParseResult, GTFileReader, load_grammar_tables, LRState, parse_string, Token, LRStackItem, GroupError, LexerError, ParserError, is_group_error, is_parser_error, is_lexer_error, LRActionType, ParserSymbol, ParsingResult, LRParseTreeNode, SymbolType, ParserRule, load_cgt, CGTData } from '@warfley/node-gold-engine';
 import * as fs from "fs";
 import * as path from "path";
 import { DefinitionType, DocumentParser, GRMRule, GRMToken, parse_rules, TokenType, token_name } from "./grm_parser";
 import { once, EventEmitter } from "node:events";
 import { Source, StackFrame, Variable } from "@vscode/debugadapter";
+import { prepare_grammar } from "./grm_debug_config";
 
 interface StepInfo {
   step_kind: "step"|"step_out"|"step_in";
@@ -288,10 +289,11 @@ export class GRMDebugger {
       return debugger_error(100, "File not found");
     }
 
-    let grammar_tables = await this.prepare_grammar(grammar_file);
-    if (grammar_tables === undefined) {
+    let cgt = await prepare_grammar(grammar_file);
+    if (cgt === undefined) {
       return debugger_error(200, "Compile error");
     }
+    let grammar_tables = load_grammar_tables(cgt);
     let grm_defintion = await this.grammar_definition(grammar_file);
     return new GRMDebugger(document, grammar_tables, grm_defintion, config,
                            write_info, write_error, break_execution, finish);
@@ -305,34 +307,6 @@ export class GRMDebugger {
                  (...args) => this.parser_shifted(...args)
                 ).then((result) => this.parser_finished(result)
                  .then(() => this.finish(result)));
-  }
-
-  private static async prepare_grammar(grammar: string): Promise<GrammarParseResult|undefined> {
-    if (grammar.endsWith(".grm")) {
-      let doc = await workspace.openTextDocument(grammar);
-      let compiled = await on_compile_command(doc.uri);
-      if (compiled === false) {
-        return undefined;
-      }
-      grammar = compiled;
-    }
-    if (!grammar.endsWith(".cgt") && !grammar.endsWith(".egt")) {
-      window.showErrorMessage("Requires Gold Grammar Tables (.cgt|.egt) for parsing");
-      return undefined;
-    }
-
-    if (!(await fs.promises.stat(grammar)).isFile()) {
-      window.showErrorMessage("GOLD Parser Tools extension currently only works for local workspaces, this seems to be a remote workspace");
-      return undefined;
-    }
-
-    let reader = await GTFileReader.from_file(grammar);
-    try {
-      return load_grammar_tables(reader);
-    } catch (error: unknown) {
-      window.showErrorMessage((error as Error).message);
-      return undefined;
-    }
   }
 
   private static async grammar_definition(selected_grammar: string): Promise<TextDocument | undefined> {
@@ -588,16 +562,17 @@ export class GRMDebugger {
     this.update_parser_stack(stack);
 
     let open_rules = this.open_rules[this.open_rules.length - 1];
-
-    // Check for rule based breakpoints
     let breakpoint: GRMBreakPoint|undefined = undefined;
-    for (const rule of open_rules) {
-      let grm_rule = find_grm_rule(this.parser, rule);
-      if (grm_rule !== undefined) {
-        breakpoint = this.grammar_break_points.find((bp) => bp.type === "RULE" &&
-                                                            bp.name === grm_rule?.name);
-        if (breakpoint !== undefined) {
-          break;
+    if (open_rules.length === 1) {
+      // Check for rule based breakpoints
+      for (const rule of open_rules) {
+        let grm_rule = find_grm_rule(this.parser, rule);
+        if (grm_rule !== undefined) {
+          breakpoint = this.grammar_break_points.find((bp) => bp.type === "RULE" &&
+                                                              bp.name === grm_rule?.name);
+          if (breakpoint !== undefined) {
+            break;
+          }
         }
       }
     }

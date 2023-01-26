@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { GRMAutoComplete } from "./grm_completion";
 import { GRMDbgConfigProvider, GRMDebugFactory } from './grm_debug_config';
 import { document_changed, document_closed, document_opend } from './grm_editor';
-import { check_paths, on_compile_command, on_parse_command } from './grm_tools';
+import { check_paths, on_compile_command, on_generate_from_grammar, on_parse_command } from './grm_tools';
 
 declare global {
 	var diagnostics_collection: vscode.DiagnosticCollection;
@@ -21,6 +21,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	let compile_command = vscode.commands.registerCommand("gold-parser-tools.compileGrammar", on_compile_command);
 	let parse_command = vscode.commands.registerCommand("gold-parser-tools.parseWithGrammar", on_parse_command);
+	let generate_command = vscode.commands.registerCommand("gold-parser-tools.generateFromGrammar", on_generate_from_grammar);
 
 	let provider = vscode.debug.registerDebugConfigurationProvider("grm", GRMDbgConfigProvider);
 	let factory = vscode.debug.registerDebugAdapterDescriptorFactory("grm", GRMDebugFactory);
@@ -37,6 +38,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(close_event);
 	context.subscriptions.push(compile_command);
 	context.subscriptions.push(parse_command);
+	context.subscriptions.push(generate_command);
 	context.subscriptions.push(provider);
 	context.subscriptions.push(factory);
 }

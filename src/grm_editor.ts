@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import { commands, Position, Range, TextDocument, TextDocumentChangeEvent, TextEditor, window } from "vscode";
-import { DocumentParser, DefinitionType } from "./grm_parser";
+import { DocumentParser, DefinitionType, TokenType } from "./grm_parser";
 
 export function document_opend(document: TextDocument) {
 		if (document.languageId === "grm") {
@@ -37,19 +37,25 @@ function indent_to_last_definition(parser: DocumentParser, editor: TextEditor, a
     return;
   }
 
-  let indent = last_definition!.range.start.character - autoindent;
+  let equals_index = last_definition.symbols.findIndex((s) => s.type === TokenType.OPERATOR);
+  if (equals_index !== 1) {
+    return;
+  }
+  let indent = last_definition.symbols[equals_index].location.character - autoindent;
   if (indent < 0) {
     return;
   }
 
   if (editor.document.lineAt(at_line - 1).text.trimEnd().endsWith("=")) {
-    indent += 1;
+    indent += 2;
   } else {
     if (last_definition.type === DefinitionType.TERMINAL) {
       unindent(editor, at_line);
       return;
     }
-    indent -= 1 + (last_definition.type === DefinitionType.NON_TERMINAL ? 1 : 0);
+    if (last_definition.type === DefinitionType.NON_TERMINAL) {
+      indent += 1;
+    };
   }
 
   if (indent <= 0) {
