@@ -589,10 +589,10 @@ export class DocumentParser {
       return;
     }
     let start_index = 1;
-    if (definition.symbols[0].value === "Comment" &&
-         (definition.symbols[1].value === "Line" ||
-          definition.symbols[1].value === "Start" ||
-          definition.symbols[1].value === "End")
+    if (definition.symbols[2].type === TokenType.OPERATOR &&
+         (token_name(definition.symbols[1]) === "line" ||
+          token_name(definition.symbols[1]) === "start" ||
+          token_name(definition.symbols[1]) === "end")
     ){
       start_index = 2;
       if (definition.symbols.length < 4) {
@@ -601,7 +601,7 @@ export class DocumentParser {
       }
     }
     if (definition.symbols[start_index].value !== "=") {
-      this.token_error(definition.symbols[start_index + 1], "Expected OPERATOR =, but found %T %%");
+      this.token_error(definition.symbols[start_index], "Expected OPERATOR =, but found %T %%");
     }
     if (definition.symbols[start_index + 1].type !== TokenType.CONST_SET &&
         definition.symbols[start_index + 1].type !== TokenType.SET &&
@@ -717,12 +717,15 @@ export class DocumentParser {
       // Add definitions to map
       let defined_symbol = definition.symbols[0];
       let definition_map = this.symbols.defined_symbols.get(definition.type)!;
-      if (defined_symbol.value !== "Comment") {
-        if (definition_map.has(token_name(defined_symbol))) {
+      if (definition_map.has(token_name(defined_symbol))) {
+        if (definition.type !== DefinitionType.NON_TERMINAL ||
+            (token_name(definition.symbols[1]) !== "line" &&
+            token_name(definition.symbols[1]) !== "start" &&
+            token_name(definition.symbols[1]) !== "end")) {
           this.token_error(defined_symbol, "Redefinition of %T '%N'");
-        } else {
-          definition_map.set(token_name(defined_symbol), definition);
         }
+      } else {
+        definition_map.set(token_name(defined_symbol), definition);
       }
 
       switch (definition.type) {
@@ -751,7 +754,8 @@ export class DocumentParser {
         continue;
       }
 
-      let start_index = defined_symbol.value === "Comment"
+      let start_index = definition.type === DefinitionType.TERMINAL &&
+                        definition.symbols[2]?.value === "="
                       ? 2 : 1;
       // parse other symbols:
       for (let i=start_index; i<definition.symbols.length; ++i) {
