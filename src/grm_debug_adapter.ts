@@ -6,7 +6,7 @@ import { EventEmitter } from "node:stream";
 import { once } from "node:events";
 import { BreakReason, GRMDebugger, GRMDebugOptions } from "./grm_debugger";
 import { select_grammar } from "./grm_debug_config";
-import { parse_successful } from "@warfley/node-gold-engine";
+import { is_group_error, parse_successful } from "@warfley/node-gold-engine";
 
 interface LaunchArgs extends DebugProtocol.LaunchRequestArguments {
   /** File to be parsed */
@@ -40,7 +40,7 @@ export class GRMDebugSession extends DebugSession {
     /** The debug adapter supports a `format` attribute on the `stackTrace`, `variables`, and `evaluate` requests. */
     response.body.supportsValueFormattingOptions = false;
     /** The debug adapter supports the `exceptionInfo` request. */
-    response.body.supportsExceptionInfoRequest = false;
+    response.body.supportsExceptionInfoRequest = true;
     /** The debug adapter supports the `terminate` request. */
     response.body.supportsTerminateRequest = false;
     /** The debug adapter supports the `readMemory` request. */
@@ -245,6 +245,11 @@ export class GRMDebugSession extends DebugSession {
                                        args: DebugProtocol.ExceptionInfoArguments,
                                        request?: DebugProtocol.Request
                                       ): Promise<void> {
+    response.body = {
+      breakMode: "always",
+      exceptionId: this.debugger.error_id(),
+      description: this.debugger.error_message()
+    };
 
     this.sendResponse(response);
   }

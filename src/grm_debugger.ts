@@ -1,8 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import { Position, TextDocument, window, workspace } from "vscode";
-import { on_compile_command } from "./grm_tools";
-import { GrammarParseResult, GTFileReader, load_grammar_tables, LRState, parse_string, Token, LRStackItem, GroupError, LexerError, ParserError, is_group_error, is_parser_error, is_lexer_error, LRActionType, ParserSymbol, ParsingResult, LRParseTreeNode, SymbolType, ParserRule, load_cgt, CGTData } from '@warfley/node-gold-engine';
-import * as fs from "fs";
+import { GrammarParseResult, load_grammar_tables, LRState, parse_string, Token, LRStackItem, GroupError, LexerError, ParserError, is_group_error, is_parser_error, is_lexer_error, LRActionType, ParserSymbol, ParsingResult, LRParseTreeNode, SymbolType, ParserRule } from '@warfley/node-gold-engine';
 import * as path from "path";
 import { DefinitionType, DocumentParser, GRMRule, GRMToken, parse_rules, TokenType, token_name } from "./grm_parser";
 import { once, EventEmitter } from "node:events";
@@ -70,7 +68,10 @@ function debugger_error(code: number, message: string): DebuggerError {
 export interface BreakReason {
   reason: "breakpoint"|"step"|"entry"|"pause"|"error";
   triggered_action: "finish"|"lexer"|"parser";
-  error?: LexerError|ParserError|GroupError;
+  error?: {
+    error_data: LexerError|ParserError|GroupError,
+    error_message: string,
+  },
   step_info?: StepKind
   breakpoint?: GRMBreakPoint
 };
@@ -355,9 +356,16 @@ export class GRMDebugger {
     }
     if (is_group_error(result)) {
       let top_group = result.groups[result.groups.length - 1];
-      let pos = this.document!.positionAt(top_group.start_position);
-      let error_message = "Unfinished group: " + top_group.group.name + " at " + pos.line + ": " + pos.character;
-      this.write_error(error_message);
+      let pos = this.document!.positionAt(top_group.start_position).translate(1, 1);
+      let error_message = "Unfinished group " + top_group.group.name + " at " + pos.line + ": " + pos.character;
+      await this.pause_execution({
+        reason: "error",
+        error: {
+          error_data: result,
+          error_message: error_message
+        },
+        triggered_action: "finish"
+      });
     } else  if (is_parser_error(result)) {
       let tok = result.last_token === "(EOF)"
               ? "EOF"
@@ -365,15 +373,31 @@ export class GRMDebugger {
       let pos = result.last_token === "(EOF)"
               ? this.document!.lineAt(this.document!.lineCount - 1).range.end
               : this.document!.positionAt(result.last_token.position);
+      pos = pos.translate(1, 1);
       let error_message = "Parser error for " + tok + " at " + pos.line + ": " + pos.character;
-      this.write_error(error_message);
+      await this.pause_execution({
+        reason: "error",
+        error: {
+          error_data: result,
+          error_message: error_message
+        },
+        triggered_action: "finish"
+      });
     } else if (is_lexer_error(result)) {
-      let symbol = this.document.getText()!.substring(result.position, result.position + 7) + "...";
-      let pos = this.document!.positionAt(result.position);
-      let error_message = "Unlexable symbol at " + pos.line + ": " + pos.character + " (" + symbol;
+      let symbol = this.document.getText()!.substring(result.position, result.position + 3).trim() + "...";
+      let pos = this.document!.positionAt(result.position).translate(1, 1);
+      let error_message = "Unlexable symbol at " + pos.line + ": " + pos.character + " (" + symbol + ")";
+      await this.pause_execution({
+        reason: "error",
+        error: {
+          error_data: result,
+          error_message: error_message
+        },
+        triggered_action: "finish"
+      });
     } else {
       let success_message = "Parsing Successful";
-    this.write_info(success_message);
+      this.write_info(success_message);
     }
   }
 
@@ -667,7 +691,7 @@ export class GRMDebugger {
         let pos = rule?.position.translate(1, 1);
         let source = this.grm_definition && file_source(this.grm_definition.fileName);
         result.push({
-          name: "Reduced: " + parse_tree.symbol.name,
+          name: parse_tree.symbol.name,
           id: i,
           source: source,
           line: pos?.line || 0,
@@ -677,9 +701,11 @@ export class GRMDebugger {
         let pos: Position|undefined = undefined;
         let source: Source|undefined = undefined;
         if (this.open_rules[i].length > 0) {
-          let grm_rule = find_grm_rule(this.parser, this.open_rules[i][0]);
+          let open_rule = this.open_rules[i][0];
+          let grm_rule = find_grm_rule(this.parser, open_rule);
           if (grm_rule !== undefined) {
-            pos = grm_rule.position.translate(1, 1);
+            let nt_token = grm_rule.consumes[open_rule.partial_consumes.length - 1];
+            pos = nt_token.location.translate(1, 1);
             source = file_source(this.grm_definition!.fileName);
           }
         }
@@ -688,7 +714,7 @@ export class GRMDebugger {
           source = file_source(this.document.fileName);
         }
         result.push({
-          name: "Shifted: " + parse_tree.symbol.name,
+          name: parse_tree.symbol.name,
           id: i,
           source: source,
           line: pos.line,
@@ -699,12 +725,74 @@ export class GRMDebugger {
     return result;
   }
 
+  public error_stack_frames(): Array<StackFrame> {
+    let result: Array<StackFrame> = [];
+    let error = this.pause_reason?.error?.error_data;
+    if (error === undefined) {
+      return [];
+    }
+
+    if (is_group_error(error)) {
+      let end_pos = this.document.lineAt(this.document.lineCount - 1).range.end.translate(1, 1);
+      for (let i=error.groups.length-1; i>=0; --i) {
+        let open_group = error.groups[i];
+        let group_pos = this.document.positionAt(open_group.start_position).translate(1, 1);
+        result.push({
+          name: "Unfinished Group: " + open_group.group.name,
+          id: i,
+          line: group_pos.line,
+          column: group_pos.character,
+          endLine: end_pos.line,
+          endColumn: end_pos.character,
+          source: file_source(this.document.fileName)
+        });
+      }
+    } else if (is_parser_error(error)) {
+      let open_rules = this.open_rules[this.open_rules.length-1];
+      if (open_rules.length > 0) {
+        let open_rule = open_rules[0];
+        let first_sym = open_rule.partial_consumes[0];
+        let last_sym = open_rule.partial_consumes[open_rule.partial_consumes.length - 1];
+        let rule_pos = this.document
+                      .positionAt(first_sym.start)
+                      .translate(1, 1);
+        let rule_end = this.document
+                      .positionAt(last_sym.end)
+                      .translate(1, 1);
+        result.push({
+          name: "Unfinished " + open_rule.produces.name,
+          id: -1,
+          line: rule_pos.line,
+          column: rule_pos.character,
+          endLine: rule_end.line,
+          endColumn: rule_end.character,
+          source: file_source(this.document.fileName)
+        });
+      }
+      result = result.concat(this.parser_stack_frames());
+    } else if (is_lexer_error(error)) {
+      let location = this.document.positionAt(error.position).translate(1, 1);
+      result.push({
+        name: "Unreckognized Token: " + this.document.getText().substring(error.position, error.position + 3).trim() + "...",
+        id: - 1,
+        line: location.line,
+        column: location.character,
+        source: file_source(this.document.fileName)
+      });
+      result = result.concat(this.lexer_stack_frames());
+    }
+
+    return result;
+  }
+
   public get_frames(): Array<StackFrame> {
     switch (this.pause_reason?.triggered_action) {
     case "lexer":
       return this.lexer_stack_frames();
     case "parser":
       return this.parser_stack_frames();
+    case "finish":
+      return this.error_stack_frames();
     }
     return [];
   }
@@ -731,7 +819,19 @@ export class GRMDebugger {
            ? "Reduction"
            : "Shift";
     case "finish":
-      return "Exception";
+      if (is_lexer_error(this.pause_reason!.error!.error_data)) {
+        return index < 0 ? "Lexer Error" : "Token";
+      } else if (is_parser_error(this.pause_reason!.error!.error_data)) {
+        if (index >= 0) {
+          this.index_tree(this.parser_stack[index], 0);
+        }
+        return index < 0
+            ? "Parser Error"
+            : this.parser_stack[index].children instanceof Array
+            ? "Reduction"
+            : "Shift";
+      } // Group_error
+      return "Group";
     }
   }
 
@@ -787,40 +887,10 @@ export class GRMDebugger {
     return undefined;
   }
 
-  public get_reduction_variables(reference: number): Array<Variable> {
-    let stack_frame = this.parser_stack[this.selected_frame];
-    /** Reference mapping:
-     * 1: Top level
-     * index = Floor((reference - 2) / 2)
-     * index + 0: Stack item info: Rule, operation, value, children
-     * index + 1: Subtrees
-     */
-    if (reference === 1) {
-      // Top level
-      return [
-        {
-          name: "Operation",
-          value: stack_frame.children instanceof Array
-              ? "Reduction"
-              : "Shift",
-          variablesReference: 0
-        },
-        {
-          name: "Look Ahead",
-          value: this.tokens[this.token_lexed.length - 1].symbol.name,
-          variablesReference: 0
-        },
-        {
-          name: "Parse Tree",
-          value: stack_frame.symbol.name,
-          variablesReference: 2
-        },
-      ];
-    }
-
-    let index = Math.floor((reference - 2) / 2);
+  private sub_tree_variables(reference: number, subtree: LRParseTreeNode) {
+    let index = Math.floor(reference / 2);
     let subindex = (reference - 2) % 2;
-    let tree_node = this.node_by_index(stack_frame, index);
+    let tree_node = this.node_by_index(subtree, index);
     if (tree_node === undefined) {
       return [];
     }
@@ -874,6 +944,39 @@ export class GRMDebugger {
     ];
   }
 
+  public get_reduction_variables(reference: number): Array<Variable> {
+    let stack_frame = this.parser_stack[this.selected_frame];
+    /** Reference mapping:
+     * 1: Top level
+     * index = Floor((reference - 2) / 2)
+     * index + 0: Stack item info: Rule, operation, value, children
+     * index + 1: Subtrees
+     */
+    if (reference === 1) {
+      // Top level
+      return [
+        {
+          name: "Operation",
+          value: stack_frame.children instanceof Array
+              ? "Reduction"
+              : "Shift",
+          variablesReference: 0
+        },
+        {
+          name: "Look Ahead",
+          value: "'" + this.tokens[this.token_lexed.length - 1].symbol.name + "'",
+          variablesReference: 0
+        },
+        {
+          name: "Parse Tree",
+          value: stack_frame.symbol.name,
+          variablesReference: 2
+        },
+      ];
+    }
+    return this.sub_tree_variables(reference - 2, stack_frame);
+  }
+
   private get_shift_variables(reference: number): Array<Variable> {
     let tree_node = this.parser_stack[this.selected_frame];
     let open_rules = this.open_rules[this.selected_frame];
@@ -895,8 +998,8 @@ export class GRMDebugger {
         },
         {
           name: "Text",
-          value: "'" + this.document.getText().substring(tree_node.start||0,
-                                                   tree_node.end||0) + "'",
+          value: "'" + this.document.getText().substring(tree_node.start,
+                                                         tree_node.end) + "'",
           variablesReference: 0
         },
         {
@@ -925,6 +1028,101 @@ export class GRMDebugger {
     return [];
   }
 
+  private parser_error_tree(): LRParseTreeNode|undefined {
+    let open_rules = this.open_rules[this.open_rules.length - 1];
+    if (open_rules.length === 0) {
+      return undefined;
+    }
+    let result = {
+      symbol: open_rules[0].produces,
+      children: open_rules[0].partial_consumes,
+      start: open_rules[0].partial_consumes[0].start,
+      end: open_rules[0].partial_consumes[open_rules[0].partial_consumes.length - 1].end
+    };
+    this.index_tree(result, 0);
+    return result;
+  }
+
+  private get_error_variables(reference: number): Array<Variable> {
+    let error = this.pause_reason!.error!.error_data;
+    if (is_lexer_error(error)) {
+      let error_pos = this.document.positionAt(error.position);
+      return [{
+        name: "Unreckognized",
+        value: "'" + this.document.getText().substring(error.position, error.position + 3).trim() + "...'",
+        variablesReference: 0
+      },
+      {
+        name: "Line",
+        value: "" + (error_pos.line + 1),
+        variablesReference: 0
+      },
+      {
+        name: "Column",
+        value: "" + (error_pos.character + 1),
+        variablesReference: 0
+      }];
+    }
+    // Group error handled seperately
+    error = error as ParserError;
+    let open_rule = this.open_rules[this.open_rules.length - 1][0];
+    let parse_tree = this.parser_error_tree()!;
+    /** Reference mapping:
+     * 1: Top level
+     * 2: parial consumes
+     * index = Floor((reference - 3) / 2)
+     * index + 0: Stack item info: Rule, operation, value, children
+     * index + 1: Subtrees
+     */
+    if (reference === 1) {
+      return [
+        {
+          name: "Current Rule",
+          value: rule_string(open_rule),
+          variablesReference: reference + 1
+        },
+        {
+          name: "Look Ahead",
+          value: "'" + this.tokens[this.token_lexed.length - 1].symbol.name + "'",
+          variablesReference: reference + 1
+        },
+        {
+          name: "Text",
+          value: "'" + this.document.getText().substring(parse_tree.start,
+                                                         parse_tree.end) + "'",
+          variablesReference: 0
+        },
+      ];
+    }
+    return this.sub_tree_variables(reference - 1, parse_tree);
+  }
+
+  private get_group_variables(reference: number): Array<Variable> {
+    let error = this.pause_reason!.error!.error_data as GroupError;
+    let error_group = error.groups[this.selected_frame];
+    let start_position = this.document.positionAt(error_group.start_position);
+    return [{
+      name: "Group",
+      value: "'" + error_group.group.name  + "'",
+      variablesReference: 0
+    },
+    {
+      name: "Started by",
+      value: "'" + symbol_name(error_group.group.start_symbol) + "'",
+      variablesReference: 0
+    },
+    {
+      name: "Expected",
+      value: "'" + symbol_name(error_group.group.end_symbol) + "'",
+      variablesReference: 0
+    },
+    {
+      name: "Advance Mode",
+      value: error_group.group.advance_mode,
+      variablesReference: 0
+    }];
+  }
+
   public get_variables(reference: number): Array<Variable> {
     switch (this.pause_reason!.triggered_action) {
     case "lexer":
@@ -934,8 +1132,33 @@ export class GRMDebugger {
            ? this.get_reduction_variables(reference)
            : this.get_shift_variables(reference);
     case "finish":
-      return [];
+      if (this.selected_frame < 0) {
+        return this.get_error_variables(reference);
+      }
+      if (is_parser_error(this.pause_reason!.error!.error_data)) {
+        return this.parser_stack[this.selected_frame].children instanceof Array
+            ? this.get_reduction_variables(reference)
+            : this.get_shift_variables(reference);
+      }
+      if (is_lexer_error(this.pause_reason!.error!.error_data)) {
+        return this.token_variables(this.tokens[this.selected_frame]);
+      }
+      return this.get_group_variables(reference);
     }
+  }
+
+  public error_id(): string {
+    if (is_group_error(this.pause_reason!.error!.error_data)) {
+      return "Group Error";
+    }
+    if (is_lexer_error(this.pause_reason!.error!.error_data)) {
+      return "Lexer Error";
+    }
+    return "Parser Error";
+  }
+
+  public error_message(): string {
+    return this.pause_reason!.error!.error_message;
   }
 
   public terminate(): void {
