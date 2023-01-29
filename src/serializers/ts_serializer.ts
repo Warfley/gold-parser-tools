@@ -50,8 +50,6 @@ export const TypeScriptSerializer: CGTSerializer = {
 
   only_declaration: true,
 
-  array_serializer: TypeScriptArraySerializer,
-
   version_serializer: {
     declaration: (version) => "version: " + escape_string(version),
     definition: () => ""
@@ -70,7 +68,8 @@ export const TypeScriptSerializer: CGTSerializer = {
     definition: () => ""
   },
   charset_serializer: {
-    in_array: (charset) => {
+    ...TypeScriptArraySerializer,
+    serialize_element: (charset) => {
       const nl = "\n      ";
       if (charset instanceof CharRangeSet) {
         let result = "new CharRangeSet(" + charset.codepage + ", [" + nl;
@@ -88,10 +87,12 @@ export const TypeScriptSerializer: CGTSerializer = {
     }
   },
   symbol_serializer: {
-    in_array: (symbol) => "{name: " + escape_string(symbol.name) + ", type: SymbolType." + SymbolType[symbol.type] + "}"
+    ...TypeScriptArraySerializer,
+    serialize_element: (symbol) => "{name: " + escape_string(symbol.name) + ", type: SymbolType." + SymbolType[symbol.type] + "}"
   },
   dfa_state_serializer: {
-    in_array: (dfa_state) => {
+    ...TypeScriptArraySerializer,
+    serialize_element: (dfa_state) => {
       const nl = "\n      ";
       let result = "{" + nl;
       if (dfa_state.result !== undefined) {
@@ -106,7 +107,8 @@ export const TypeScriptSerializer: CGTSerializer = {
     }
   },
   lr_state_serializer: {
-    in_array: (lr_state) => {
+    ...TypeScriptArraySerializer,
+    serialize_element: (lr_state) => {
       const nl = "\n      ";
       let result = "{" + nl + "transitions: [" + nl;
       for (let edge of lr_state.transitions) {
@@ -127,7 +129,8 @@ export const TypeScriptSerializer: CGTSerializer = {
     definition: () => ""
   },
   rule_serializer: {
-    in_array: (rule) => {
+    ...TypeScriptArraySerializer,
+    serialize_element: (rule) => {
       const nl = "\n      ";
       let result = "{" + nl
                  + "index: " + rule.index + "," + nl
@@ -141,7 +144,8 @@ export const TypeScriptSerializer: CGTSerializer = {
     }
   },
   group_serializer: {
-    in_array: (group) => {
+    ...TypeScriptArraySerializer,
+    serialize_element: (group) => {
       const nl = "\n      ";
       let result = "{" + nl
                  + "name: " + escape_string(group.name) + "," + nl

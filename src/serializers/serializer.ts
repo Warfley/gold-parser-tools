@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import { CGTData, CGTDFAState, CGTGroup, CGTLRState, CGTRule, CGTSymbol, CharSet } from "@warfley/node-gold-engine";
+import { FreePascalSerializer } from "./fpc_serializer";
 import { TypeScriptSerializer } from "./ts_serializer";
 
 export const Serializers = new Map<string, CGTSerializer>([
-  ["typescript", TypeScriptSerializer]
+  ["typescript", TypeScriptSerializer],
+  ["pascal", FreePascalSerializer]
 ]);
 
 export type CGTDataName = "version"|"param"|"charset"|"symbol"|"dfastate"
@@ -25,7 +27,6 @@ export interface CGTSerializer {
   // If the language can do all in one place, set this to true
   only_declaration: boolean;
 
-  array_serializer: ArraySerializer;
   version_serializer: VersionSerializer;
   params_serializer: ParamsSerializer;
   charset_serializer: CharsetSerializer;
@@ -59,20 +60,20 @@ export interface ParamsSerializer {
   definition: (params: Map<string, string>) => string;
 }
 
-export interface CharsetSerializer {
-  in_array: (charset: CharSet) => string;
+export interface CharsetSerializer extends ArraySerializer {
+  serialize_element: (charset: CharSet) => string;
 }
 
-export interface SymbolSerializer {
-  in_array: (symbol: CGTSymbol) => string;
+export interface SymbolSerializer extends ArraySerializer {
+  serialize_element: (symbol: CGTSymbol) => string;
 }
 
-export interface DFAStateSerializer {
-  in_array: (dfa_state: CGTDFAState) => string;
+export interface DFAStateSerializer extends ArraySerializer {
+  serialize_element: (dfa_state: CGTDFAState) => string;
 }
 
-export interface LRStateSerializer {
-  in_array: (lr_state: CGTLRState) => string;
+export interface LRStateSerializer extends ArraySerializer {
+  serialize_element: (lr_state: CGTLRState) => string;
 }
 
 export interface InitialSerializer {
@@ -80,51 +81,51 @@ export interface InitialSerializer {
   definition: (initial_state: number) => string;
 }
 
-export interface RuleSerializer {
-  in_array: (rule: CGTRule) => string;
+export interface RuleSerializer extends ArraySerializer {
+  serialize_element: (rule: CGTRule) => string;
 }
 
-export interface GroupSerializer {
-  in_array: (group: CGTGroup) => string;
+export interface GroupSerializer extends ArraySerializer {
+  serialize_element: (group: CGTGroup) => string;
 }
 
-function serialize_element(element: object, datatype: CGTDataName, serializer: CGTSerializer): string {
+function serialize_element(element: object, datatype: CGTDataName, serializer: ArraySerializer): string {
   switch (datatype) {
   case "charset":
-    return serializer.charset_serializer.in_array(element as CharSet);
+    return (serializer as CharsetSerializer).serialize_element(element as CharSet);
   case "symbol":
-    return serializer.symbol_serializer.in_array(element as CGTSymbol);
+    return (serializer as SymbolSerializer).serialize_element(element as CGTSymbol);
   case "dfastate":
-    return serializer.dfa_state_serializer.in_array(element as CGTDFAState);
+    return (serializer as DFAStateSerializer).serialize_element(element as CGTDFAState);
   case "lrstate":
-    return serializer.lr_state_serializer.in_array(element as CGTLRState);
+    return (serializer as LRStateSerializer).serialize_element(element as CGTLRState);
   case "rule":
-    return serializer.rule_serializer.in_array(element as CGTRule);
+    return (serializer as RuleSerializer).serialize_element(element as CGTRule);
   case "group":
-    return serializer.group_serializer.in_array(element as CGTGroup);
+    return (serializer as GroupSerializer).serialize_element(element as CGTGroup);
   }
 
   throw new Error("Not an array type");
 }
 
-function serialize_array(array: Array<object>, datatype: CGTDataName, where: "declaration"|"definition", serializer: CGTSerializer): string {
+function serialize_array(array: Array<object>, datatype: CGTDataName, where: "declaration"|"definition", element_serializer: ArraySerializer): string {
   let result = "";
-  result += serializer.array_serializer.declaration(array, datatype);
+  result += element_serializer.declaration(array, datatype);
   if (where === "definition") {
-    result += serializer.array_serializer.definition(array, datatype);
+    result += element_serializer.definition(array, datatype);
   }
-  if (where === "declaration" && serializer.array_serializer.value_in_declaration ||
-      where === "definition" && !serializer.array_serializer.value_in_declaration) {
-    result += serializer.array_serializer.before_elements(array, datatype);
+  if (where === "declaration" && element_serializer.value_in_declaration ||
+      where === "definition" && !element_serializer.value_in_declaration) {
+    result += element_serializer.before_elements(array, datatype);
     for (let i=0; i<array.length; ++i) {
       if (i>0) {
-        result += serializer.array_serializer.between_elements(array[i-1], array[i], datatype);
+        result += element_serializer.between_elements(array[i-1], array[i], datatype);
       }
-      result += serializer.array_serializer.before_element(array[i], datatype);
-      result += serialize_element(array[i], datatype, serializer);
-      result += serializer.array_serializer.after_element(array[i], datatype);
+      result += element_serializer.before_element(array[i], datatype);
+      result += serialize_element(array[i], datatype, element_serializer);
+      result += element_serializer.after_element(array[i], datatype);
     }
-    result += serializer.array_serializer.after_elements(array, datatype);
+    result += element_serializer.after_elements(array, datatype);
   }
   return result;
 }
@@ -139,21 +140,21 @@ export function serialize_cgt(cgt_data: CGTData, serializer: CGTSerializer,
     result += serializer.between_declarations("version", "param");
     result += serializer.params_serializer.declaration(cgt_data.params);
     result += serializer.between_declarations("param", "charset");
-    result += serialize_array(cgt_data.charsets, "charset", where, serializer);
+    result += serialize_array(cgt_data.charsets, "charset", where, serializer.charset_serializer);
     result += serializer.between_declarations("charset", "symbol");
-    result += serialize_array(cgt_data.symbols, "symbol", where, serializer);
+    result += serialize_array(cgt_data.symbols, "symbol", where, serializer.symbol_serializer);
     result += serializer.between_declarations("symbol", "dfastate");
-    result += serialize_array(cgt_data.dfa_states, "dfastate", where, serializer);
+    result += serialize_array(cgt_data.dfa_states, "dfastate", where, serializer.dfa_state_serializer);
     result += serializer.between_declarations("dfastate", "lrstate");
-    result += serialize_array(cgt_data.lr_states, "lrstate", where, serializer);
+    result += serialize_array(cgt_data.lr_states, "lrstate", where, serializer.lr_state_serializer);
     result += serializer.between_declarations("lrstate", "dfainitial");
     result += serializer.dfa_initial_serializer.declaration(cgt_data.dfa_init_state);
     result += serializer.between_declarations("dfainitial", "lrinitial");
     result += serializer.lr_initial_serializer.declaration(cgt_data.lr_init_state);
     result += serializer.between_declarations("lrinitial", "rule");
-    result += serialize_array(cgt_data.rules, "rule", where, serializer);
+    result += serialize_array(cgt_data.rules, "rule", where, serializer.rule_serializer);
     result += serializer.between_declarations("rule", "group");
-    result += serialize_array(cgt_data.groups, "group", where, serializer);
+    result += serialize_array(cgt_data.groups, "group", where, serializer.group_serializer);
     result += serializer.after_declarations(cgt_data, grammar_name);
   } else { // "definition"
     result += serializer.before_definitions(cgt_data, grammar_name);
@@ -161,21 +162,21 @@ export function serialize_cgt(cgt_data: CGTData, serializer: CGTSerializer,
     result += serializer.between_definitions("version", "param");
     result += serializer.params_serializer.definition(cgt_data.params);
     result += serializer.between_definitions("param", "charset");
-    result += serialize_array(cgt_data.charsets, "charset", where, serializer);
+    result += serialize_array(cgt_data.charsets, "charset", where, serializer.charset_serializer);
     result += serializer.between_definitions("charset", "symbol");
-    result += serialize_array(cgt_data.symbols, "symbol", where, serializer);
+    result += serialize_array(cgt_data.symbols, "symbol", where, serializer.symbol_serializer);
     result += serializer.between_definitions("symbol", "dfastate");
-    result += serialize_array(cgt_data.dfa_states, "dfastate", where, serializer);
+    result += serialize_array(cgt_data.dfa_states, "dfastate", where, serializer.dfa_state_serializer);
     result += serializer.between_definitions("dfastate", "lrstate");
-    result += serialize_array(cgt_data.lr_states, "lrstate", where, serializer);
+    result += serialize_array(cgt_data.lr_states, "lrstate", where, serializer.lr_state_serializer);
     result += serializer.between_definitions("lrstate", "dfainitial");
     result += serializer.dfa_initial_serializer.definition(cgt_data.dfa_init_state);
     result += serializer.between_definitions("dfainitial", "lrinitial");
     result += serializer.lr_initial_serializer.definition(cgt_data.lr_init_state);
     result += serializer.between_definitions("lrinitial", "rule");
-    result += serialize_array(cgt_data.rules, "rule", where, serializer);
+    result += serialize_array(cgt_data.rules, "rule", where, serializer.rule_serializer);
     result += serializer.between_definitions("rule", "group");
-    result += serialize_array(cgt_data.groups, "group", where, serializer);
+    result += serialize_array(cgt_data.groups, "group", where, serializer.group_serializer);
     result += serializer.after_definitions(cgt_data, grammar_name);
   }
 

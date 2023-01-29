@@ -89,7 +89,11 @@ There are generally three options:
 * `declaration`: Generate the Declaration of the parser datastructure. For most languages this will include all the parser information
 * `definition`: Some languages like C split `declaration` (Types and Structures) and `definitions` (Implementation and Values), in this case the definition option will be available to generate the implementation/value half of the parser.
 
-Currently only a typescript (Node JS) generator is available, which provides import and declaration generation, as no definition is necessary for typescript.
+Currently the following generators are available:
+* Typescript: Generates Typescript code to be used with the [Node GOLD Engine](https://github.com/Warfley/NodeGoldEngine)
+  * Imports and Declaration (as no definition is required)
+* Pascal: Generates FreePascal code to be used with the [FPC GOLD Engine](https://github.com/Warfley/FPCGoldEngine)
+  * Declaration generates a class and Definition generates the constructor code for that class
 
 ## Requirements
 
