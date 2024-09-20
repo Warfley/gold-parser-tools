@@ -37,7 +37,7 @@ const FreePascalAddSerializer: ArraySerializer = {
   definition: () => "",
 
   before_elements: (arr, datatype) => "",
-  before_element: (element, datatype) => {
+  before_element: (element, index, datatype) => {
     switch (datatype) {
     case "charset":
       return "FDFA.AddCharset(";
@@ -108,7 +108,7 @@ export const FreePascalSerializer: CGTSerializer = {
   },
   charset_serializer: {
     ...FreePascalAddSerializer,
-    serialize_element: (charset) => {
+    serialize_element: (charset, _) => {
       const nl = "\n      ";
       if (charset instanceof CharRangeSet) {
         let result = "TRangeCharset.FromArray(" + charset.codepage + ", [" + nl;
@@ -126,13 +126,13 @@ export const FreePascalSerializer: CGTSerializer = {
   },
   symbol_serializer: {
     ...FreePascalAddSerializer,
-    serialize_element: (symbol) => "Symbol(SymbolList.Count, "
+    serialize_element: (symbol, _) => "Symbol(SymbolList.Count, "
                                  + escape_string(symbol.name)
                                  + ", TSymbolType(" + symbol.type+ "))"
   },
   dfa_state_serializer: {
     ...FreePascalAddSerializer,
-    serialize_element: (dfa_state) => {
+    serialize_element: (dfa_state, _) => {
       const nl = "\n      ";
       let result = (dfa_state.result || -1) + ", [" + nl;
       let edges = dfa_state.edges.map((edge) =>
@@ -143,7 +143,7 @@ export const FreePascalSerializer: CGTSerializer = {
   },
   lr_state_serializer: {
     ...FreePascalAddSerializer,
-    serialize_element: (lr_state) => {
+    serialize_element: (lr_state, _) => {
       const nl = "\n      ";
       let result = "TLRState.Create([" + nl;
       let transitions = lr_state.transitions.map((edge) =>
@@ -164,7 +164,7 @@ export const FreePascalSerializer: CGTSerializer = {
   },
   rule_serializer: {
     ...FreePascalAddSerializer,
-    serialize_element: (rule) => {
+    serialize_element: (rule, _) => {
       let result = "LRRule(" + rule.produces + ", [";
       result += rule.consumes.join(", ") + "])";
       return result;
@@ -172,7 +172,7 @@ export const FreePascalSerializer: CGTSerializer = {
   },
   group_serializer: {
     ...FreePascalAddSerializer,
-    serialize_element: (group) => {
+    serialize_element: (group, _) => {
       let result = "Group(" + escape_string(group.name) + ", "
                  + group.symbol + ", " + group.start_symbol + ", "
                  + group.end_symbol + ", ga" + group.advance_mode + "wise, "

@@ -5,7 +5,7 @@ import * as path from 'path';
 import { platform } from "process";
 import { spawnSync } from "child_process";
 import { prepare_grammar, select_grammar } from "./grm_debug_config";
-import { Serializers, serialize_cgt } from "./serializers/serializer";
+import { Serializers, GrammarSerializer } from "./serializers/serializer";
 import { CGTData } from "@warfley/node-gold-engine";
 
 export const BUILD_EXE = "GOLDbuild.exe";
@@ -282,7 +282,7 @@ export async function on_generate_from_grammar(grammar?: Uri): Promise<boolean> 
 
   let serialized = where === "imports"
                  ? selected_serializer.imports!
-                 : serialize_cgt(cgt_data, selected_serializer, grammar_name(grammar.fsPath, cgt_data), where);
+                 : new GrammarSerializer(cgt_data).serialize(selected_serializer, grammar_name(grammar.fsPath, cgt_data), where);
 
   current_editor.edit((builder) => builder.insert(current_editor!.selection.start, serialized));
   return true;

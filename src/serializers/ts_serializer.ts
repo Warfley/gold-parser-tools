@@ -69,7 +69,7 @@ export const TypeScriptSerializer: CGTSerializer = {
   },
   charset_serializer: {
     ...TypeScriptArraySerializer,
-    serialize_element: (charset) => {
+    serialize_element: (charset, _) => {
       const nl = "\n      ";
       if (charset instanceof CharRangeSet) {
         let result = "new CharRangeSet(" + charset.codepage + ", [" + nl;
@@ -88,11 +88,11 @@ export const TypeScriptSerializer: CGTSerializer = {
   },
   symbol_serializer: {
     ...TypeScriptArraySerializer,
-    serialize_element: (symbol) => "{name: " + escape_string(symbol.name) + ", type: SymbolType." + SymbolType[symbol.type] + "}"
+    serialize_element: (symbol, _) => "{name: " + escape_string(symbol.name) + ", type: SymbolType." + SymbolType[symbol.type] + "}"
   },
   dfa_state_serializer: {
     ...TypeScriptArraySerializer,
-    serialize_element: (dfa_state) => {
+    serialize_element: (dfa_state, _) => {
       const nl = "\n      ";
       let result = "{" + nl;
       if (dfa_state.result !== undefined) {
@@ -108,7 +108,7 @@ export const TypeScriptSerializer: CGTSerializer = {
   },
   lr_state_serializer: {
     ...TypeScriptArraySerializer,
-    serialize_element: (lr_state) => {
+    serialize_element: (lr_state, _) => {
       const nl = "\n      ";
       let result = "{" + nl + "transitions: [" + nl;
       for (let edge of lr_state.transitions) {
@@ -130,7 +130,7 @@ export const TypeScriptSerializer: CGTSerializer = {
   },
   rule_serializer: {
     ...TypeScriptArraySerializer,
-    serialize_element: (rule) => {
+    serialize_element: (rule, _) => {
       const nl = "\n      ";
       let result = "{" + nl
                  + "index: " + rule.index + "," + nl
@@ -145,7 +145,7 @@ export const TypeScriptSerializer: CGTSerializer = {
   },
   group_serializer: {
     ...TypeScriptArraySerializer,
-    serialize_element: (group) => {
+    serialize_element: (group, _) => {
       const nl = "\n      ";
       let result = "{" + nl
                  + "name: " + escape_string(group.name) + "," + nl
