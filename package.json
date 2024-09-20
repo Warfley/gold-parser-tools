@@ -1,8 +1,10 @@
 {
   "name": "gold-parser-tools",
   "displayName": "GOLD Parser Tools",
-  "description": "VSCode Integration for GOLD Parser",
-  "version": "0.0.1",
+  "description": "VSCode Integration for GOLD Parsing Tools",
+  "publisher": "FredericKehrein",
+  "repository": "https://github.com/Warfley/gold-parser-tools",
+  "version": "0.0.3",
   "engines": {
     "vscode": "^1.74.0"
   },
